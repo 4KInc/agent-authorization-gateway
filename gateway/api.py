@@ -125,6 +125,16 @@ async def lifespan(app: FastAPI):
             })
             logger.info("Saved default policy to Firestore")
 
+        # Restore rate limit counters from Firestore (survives restarts)
+        stored_rates = await store.get_rate_limits(gateway.tenant)
+        if stored_rates:
+            stored_rates.pop("updated_at", None)
+            # Convert stored timestamps back to float lists
+            for key, timestamps in stored_rates.items():
+                if isinstance(timestamps, list):
+                    gateway._policy_engine._rate_counters[key] = timestamps
+            logger.info(f"Restored rate limit counters: {len(stored_rates)} keys")
+
         # Resume chain from Firestore so new receipts continue the sequence
         stored_chain = await store.get_chain(gateway.tenant)
         if stored_chain:
@@ -218,8 +228,11 @@ async def authorize(req: AuthorizeRequest):
     try:
         await store.save_receipt(gateway.tenant, enriched)
         await store.save_stats(gateway.tenant, gateway.get_chain_stats())
+        await store.save_rate_limits(gateway.tenant, gateway._policy_engine._rate_counters)
     except Exception as e:
-        print(f"[authorize] Persistence warning: {e}")
+        logger.warning(f"Persistence warning: {e}")
+
+    logger.info(f"authorize: agent={req.agent_id} action={req.action} resource={req.resource} decision={response.decision}")
 
     return AuthorizeResponse(
         decision=response.decision,
@@ -229,6 +242,29 @@ async def authorize(req: AuthorizeRequest):
         action_digest=response.action_digest,
         receipt_hash=response.receipt_hash,
     )
+
+
+@api_app.post("/authorize/dry-run")
+async def authorize_dry_run(req: AuthorizeRequest):
+    """Simulate an authorization without creating a receipt or token.
+
+    Evaluates the policy and returns what the decision would be,
+    without signing a receipt or advancing the chain. Useful for
+    testing policy changes before applying them.
+    """
+    gateway = _get_gateway()
+    result = gateway._policy_engine.evaluate(
+        agent_id=req.agent_id,
+        action=req.action,
+        resource=req.resource,
+        parameters=req.parameters,
+    )
+    return {
+        "decision": result.decision,
+        "reason_codes": result.reason_codes,
+        "dry_run": True,
+        "policy_version": gateway.policy.policy_hash(),
+    }
 
 
 async def _resolve_key(req_key, receipt=None):

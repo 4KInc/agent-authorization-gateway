@@ -18,7 +18,7 @@ from google.adk.agents import Agent
 from google.adk.tools import McpToolset
 from google.adk.tools.mcp_tool import StreamableHTTPConnectionParams
 
-from .tools import query_database_tool, search_analytics_tool, list_datasets_tool
+from .tools import query_database_tool, search_analytics_tool, list_datasets_tool, write_data_tool
 
 # MCP connection to the Gateway's authorization tools
 GATEWAY_MCP_URL = os.environ.get(
@@ -49,12 +49,13 @@ Your workflow for every data request:
    - parameters: any relevant parameters as a JSON string
 3. If decision is "approve":
    - Take the token from the response
-   - Call the appropriate data tool (query_database, search_analytics, or list_datasets) with the token
+   - Call the appropriate data tool (query_database, search_analytics, list_datasets, or write_data) with the token
    - Present the results to the user
 4. If decision is "deny":
    - Tell the user the action was blocked
    - Explain the reason codes
    - Suggest compliant alternatives (e.g., use staging instead of production)
+   - NOTE: "write" actions will be denied by Gateway policy — this is expected behavior demonstrating the enforcement boundary
 
 RULES:
 - NEVER skip authorization — every data access needs a token
@@ -74,5 +75,6 @@ worker_agent = Agent(
         query_database_tool,
         search_analytics_tool,
         list_datasets_tool,
+        write_data_tool,
     ],
 )

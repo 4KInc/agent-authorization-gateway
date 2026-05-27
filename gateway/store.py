@@ -42,6 +42,12 @@ class ReceiptStore(ABC):
     @abstractmethod
     async def get_policy(self, tenant: str) -> dict | None: ...
 
+    @abstractmethod
+    async def save_rate_limits(self, tenant: str, counters: dict) -> None: ...
+
+    @abstractmethod
+    async def get_rate_limits(self, tenant: str) -> dict | None: ...
+
 
 class InMemoryStore(ReceiptStore):
     """In-memory receipt store for local development and testing."""
@@ -83,6 +89,12 @@ class InMemoryStore(ReceiptStore):
 
     async def get_policy(self, tenant: str) -> dict | None:
         return self._stats.get(f"{tenant}:policy")
+
+    async def save_rate_limits(self, tenant: str, counters: dict) -> None:
+        self._stats[f"{tenant}:rate_limits"] = counters
+
+    async def get_rate_limits(self, tenant: str) -> dict | None:
+        return self._stats.get(f"{tenant}:rate_limits")
 
 
 class FirestoreStore(ReceiptStore):
@@ -145,6 +157,17 @@ class FirestoreStore(ReceiptStore):
     async def get_policy(self, tenant: str) -> dict | None:
         doc_ref = self._db.collection("tenants").document(tenant) \
             .collection("metadata").document("policy")
+        doc = await doc_ref.get()
+        return doc.to_dict() if doc.exists else None
+
+    async def save_rate_limits(self, tenant: str, counters: dict) -> None:
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("metadata").document("rate_limits")
+        await doc_ref.set({**counters, "updated_at": time.time()})
+
+    async def get_rate_limits(self, tenant: str) -> dict | None:
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("metadata").document("rate_limits")
         doc = await doc_ref.get()
         return doc.to_dict() if doc.exists else None
 
