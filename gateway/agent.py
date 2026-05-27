@@ -12,6 +12,7 @@ from .tools.authorize_tool import (
     get_chain_stats_tool,
     get_public_key_tool,
     get_receipt_chain_tool,
+    verify_receipt_adk_tool,
 )
 
 GATEWAY_SYSTEM_INSTRUCTION = """You are the Agent Authorization Gateway — a security agent that evaluates whether AI agents are authorized to perform privileged actions.
@@ -45,5 +46,6 @@ gateway_agent = Agent(
         get_chain_stats_tool,
         get_receipt_chain_tool,
         get_public_key_tool,
+        verify_receipt_adk_tool,
     ],
 )

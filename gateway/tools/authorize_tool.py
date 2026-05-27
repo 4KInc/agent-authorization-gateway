@@ -2,16 +2,21 @@
 
 Exposes the Gateway Service as a callable tool for AI agents.
 Any agent (ADK, LangChain, CrewAI) can call this via MCP or direct invocation.
+Persists receipts to the configured store (Firestore or in-memory).
 """
 
 from __future__ import annotations
 
+import asyncio
+
 from google.adk.tools import FunctionTool
 
 from ..gateway_service import GatewayService
+from ..store import ReceiptStore, create_store
 
-# Module-level gateway instance (initialized once per process)
+# Module-level gateway + store (initialized once per process)
 _gateway: GatewayService | None = None
+_store: ReceiptStore | None = None
 
 
 def _get_gateway() -> GatewayService:
@@ -19,6 +24,25 @@ def _get_gateway() -> GatewayService:
     if _gateway is None:
         _gateway = GatewayService(tenant="hackathon-demo")
     return _gateway
+
+
+def _get_store() -> ReceiptStore:
+    global _store
+    if _store is None:
+        _store = create_store()
+    return _store
+
+
+def _run_async(coro):
+    """Run an async coroutine from sync context."""
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're already in an async context, create a task
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 def authorize_action(
@@ -50,12 +74,21 @@ def authorize_action(
             params = {"raw": parameters}
 
     gateway = _get_gateway()
+    store = _get_store()
+
     response = gateway.authorize(
         agent_id=agent_id,
         action=action,
         resource=resource,
         parameters=params,
     )
+
+    # Persist receipt and stats (fire-and-forget in sync context)
+    try:
+        _run_async(store.save_receipt(gateway.tenant, response.receipt))
+        _run_async(store.save_stats(gateway.tenant, gateway.get_chain_stats()))
+    except Exception:
+        pass  # Don't fail authorization if persistence fails
 
     return {
         "decision": response.decision,
@@ -91,8 +124,36 @@ def get_public_key() -> dict:
     return _get_gateway().get_public_key_jwk()
 
 
+def verify_receipt_tool_fn(receipt_json: str) -> dict:
+    """Verify a receipt's cryptographic integrity and signature.
+
+    Takes a receipt envelope as a JSON string and verifies:
+    1. The canonical hash matches the claimed receipt_hash
+    2. The Ed25519 signature is valid
+    3. The receipt was not tampered with after signing
+
+    Args:
+        receipt_json: JSON string of the receipt envelope (body + sig + receipt_hash).
+
+    Returns:
+        Verification result with receipt_integrity status and any errors.
+    """
+    import json
+    from ..verify import verify_receipt as _verify
+
+    try:
+        envelope = json.loads(receipt_json)
+    except json.JSONDecodeError:
+        return {"receipt_integrity": "FAIL", "errors": [{"code": "INVALID_JSON", "message": "Could not parse receipt JSON"}]}
+
+    gateway = _get_gateway()
+    result = _verify(envelope, gateway.get_public_key_jwk())
+    return result.to_dict()
+
+
 # Export as ADK FunctionTools
 authorize_action_tool = FunctionTool(authorize_action)
 get_chain_stats_tool = FunctionTool(get_chain_stats)
 get_receipt_chain_tool = FunctionTool(get_receipt_chain)
 get_public_key_tool = FunctionTool(get_public_key)
+verify_receipt_adk_tool = FunctionTool(verify_receipt_tool_fn)
