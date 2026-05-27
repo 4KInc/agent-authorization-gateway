@@ -1,0 +1,85 @@
+{
+  "receipts": [
+    {
+      "body": {
+        "v": "1",
+        "tenant": "hackathon-demo",
+        "seq": "1",
+        "ts": "2026-05-27T16:24:05.600Z",
+        "request_digest": "sha256:4f24f882c791a252211792cf92bcad2da3c12fe5d8469502cd304ed0c4bebdf1",
+        "policy_version": "sha256:d59a1e4171e6c60b1dc0964748d484f5cfd5df8e5bafedd9797e10ab7ac6e3c9",
+        "decision": "approve",
+        "reasons": [],
+        "prev_receipt": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "sig": {
+        "alg": "EdDSA",
+        "kid": "gateway-hackathon-demo-4c5414b1",
+        "value": "FabwxxVZqYnpsEnY0YQgBoNJ9P6XYorklcwKig37NJ9VKTSAStS-coXp_E15OQs9VOui-bjubS3tYgQQPXnkCw"
+      },
+      "receipt_hash": "sha256:882da2baf85006e6ca5a450214bee1e5c66987626e8e8f22e8b1c520cd848284"
+    },
+    {
+      "body": {
+        "v": "1",
+        "tenant": "hackathon-demo",
+        "seq": "2",
+        "ts": "2026-05-27T16:24:05.601Z",
+        "request_digest": "sha256:f2bec1448c4c2f4783e82b51b208b6460eec220343f58b94fdba446f2879ca7c",
+        "policy_version": "sha256:d59a1e4171e6c60b1dc0964748d484f5cfd5df8e5bafedd9797e10ab7ac6e3c9",
+        "decision": "deny",
+        "reasons": [
+          "ACTION_NOT_ALLOWED:allowed_actions",
+          "RESOURCE_OUT_OF_SCOPE:resource_scope"
+        ],
+        "prev_receipt": "sha256:882da2baf85006e6ca5a450214bee1e5c66987626e8e8f22e8b1c520cd848284"
+      },
+      "sig": {
+        "alg": "EdDSA",
+        "kid": "gateway-hackathon-demo-4c5414b1",
+        "value": "HOeFe0LXlhXhc_l1q01Cp9wkzqCmb_Ml_VwCCwPgh8hOrV_pnxngtz5D8dj6Z83kuUsYR8swbzFlhXghy0-rCQ"
+      },
+      "receipt_hash": "sha256:ab400f3f3d39ab69ae410b8f4bba0504d6615286d86c9ee287f7ce3570871d26"
+    },
+    {
+      "body": {
+        "v": "1",
+        "tenant": "hackathon-demo",
+        "seq": "3",
+        "ts": "2026-05-27T16:24:05.602Z",
+        "request_digest": "sha256:7a6cbd9ea787599a9c4958dcb5cce7f9a57550b9e53e07c11a2972c17186af37",
+        "policy_version": "sha256:d59a1e4171e6c60b1dc0964748d484f5cfd5df8e5bafedd9797e10ab7ac6e3c9",
+        "decision": "approve",
+        "reasons": [],
+        "prev_receipt": "sha256:ab400f3f3d39ab69ae410b8f4bba0504d6615286d86c9ee287f7ce3570871d26"
+      },
+      "sig": {
+        "alg": "EdDSA",
+        "kid": "gateway-hackathon-demo-4c5414b1",
+        "value": "pqrKPx0mnt9vm1VjkcS_M7mr6zd7_DnsSPhFUi-lXSL8BGUFQWJ6FOdt44IkXzURNJUksZBAuSgICCmtknYMBA"
+      },
+      "receipt_hash": "sha256:ca8fdde772cfc6c1a8d0e5b4d6482ada048aa0bae03d9d081f42b6d3cdb786aa"
+    }
+  ],
+  "keys": {
+    "tenant": "hackathon-demo",
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "gateway-hackathon-demo-4c5414b1",
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": "QM5fQtr8F0UvY8dBs4_1i6iXF5R4wJUyYw2boiBm_R8"
+      }
+    ]
+  },
+  "stats": {
+    "tenant": "hackathon-demo",
+    "total_receipts": 3,
+    "approvals": 2,
+    "denials": 1,
+    "merkle_root": "sha256:defb13e878de09a9f7d7f657df2fb9692653ab110d1b75a8c16b02643eadf13f",
+    "policy_version": "sha256:d59a1e4171e6c60b1dc0964748d484f5cfd5df8e5bafedd9797e10ab7ac6e3c9"
+  }
+}

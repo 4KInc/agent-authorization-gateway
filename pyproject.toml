@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-authorization-gateway"
+version = "0.1.0"
+description = "Cryptographic policy enforcement for AI agent actions — every privileged action gets a policy check and a tamper-evident receipt."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "Heartlin Machado" }]
+dependencies = [
+    "google-adk>=1.0.0",
+    "google-cloud-firestore>=2.19.0",
+    "cryptography>=44.0.0",
+    "PyJWT>=2.9.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
