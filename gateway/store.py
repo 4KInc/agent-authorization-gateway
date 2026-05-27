@@ -129,12 +129,17 @@ class FirestoreStore(ReceiptStore):
 def create_store() -> ReceiptStore:
     """Create the appropriate store based on environment.
 
-    Uses Firestore if GOOGLE_CLOUD_PROJECT is set, otherwise in-memory.
+    Uses Firestore if FIRESTORE_ENABLED=true is set AND the database exists.
+    Otherwise falls back to in-memory (safe default for hackathon).
     """
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if project_id:
-        try:
-            return FirestoreStore(project_id=project_id)
-        except Exception:
-            pass
+    if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if project_id:
+            try:
+                store = FirestoreStore(project_id=project_id)
+                print(f"[store] Using Firestore (project={project_id})")
+                return store
+            except Exception as e:
+                print(f"[store] Firestore init failed ({e}), falling back to in-memory")
+    print("[store] Using in-memory store")
     return InMemoryStore()

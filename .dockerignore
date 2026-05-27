@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.adk/
+authorization_gateway/.adk/
+demo_output.json
+*.egg-info/
+.env

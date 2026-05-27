@@ -89,15 +89,17 @@ class StatsResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: save initial keys to store
-    gateway = _get_gateway()
-    store = _get_store()
-    keys = {
-        "tenant": gateway.tenant,
-        "keys": [gateway.get_public_key_jwk()],
-    }
-    await store.save_keys(gateway.tenant, keys)
+    try:
+        gateway = _get_gateway()
+        store = _get_store()
+        keys = {
+            "tenant": gateway.tenant,
+            "keys": [gateway.get_public_key_jwk()],
+        }
+        await store.save_keys(gateway.tenant, keys)
+    except Exception as e:
+        print(f"[startup] Store init warning (non-fatal): {e}")
     yield
-    # Shutdown: nothing to clean up
 
 
 api_app = FastAPI(
