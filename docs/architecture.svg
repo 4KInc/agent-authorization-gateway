@@ -68,12 +68,13 @@
   <text x="460" y="175" text-anchor="middle" font-size="9" fill="#0d9488">transfer_to_agent</text>
 
   <!-- ========== MCP CONNECTION ========== -->
-  <rect x="155" y="278" width="80" height="22" rx="4" fill="#fef3c7" stroke="#d97706"/>
-  <text x="195" y="293" text-anchor="middle" font-size="10" font-weight="600" fill="#d97706">MCP</text>
+  <rect x="235" y="278" width="70" height="22" rx="4" fill="#fef3c7" stroke="#d97706"/>
+  <text x="270" y="293" text-anchor="middle" font-size="10" font-weight="600" fill="#d97706">MCP</text>
 
-  <!-- Arrow: Worker → Gateway via MCP -->
-  <line x1="235" y1="289" x2="305" y2="289" stroke="#d97706" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
-  <text x="270" y="282" text-anchor="middle" font-size="9" fill="#d97706">authorize</text>
+  <!-- Arrow: Worker → MCP → Gateway -->
+  <line x1="230" y1="289" x2="232" y2="289" stroke="#d97706" stroke-width="2"/>
+  <line x1="305" y1="289" x2="308" y2="289" stroke="#d97706" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
+  <text x="270" y="272" text-anchor="middle" font-size="9" fill="#d97706">authorize</text>
 
   <!-- ========== POLICY ENGINE ========== -->
   <rect x="610" y="220" width="180" height="80" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
