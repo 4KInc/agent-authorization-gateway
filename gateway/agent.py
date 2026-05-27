@@ -6,6 +6,7 @@ the gateway tools for cryptographic receipt signing.
 """
 
 from google.adk.agents import Agent
+from google.adk.tools import GoogleSearchTool
 
 from .tools.authorize_tool import (
     authorize_action_tool,
@@ -14,6 +15,11 @@ from .tools.authorize_tool import (
     get_receipt_chain_tool,
     verify_receipt_adk_tool,
 )
+
+# Google Search grounding — enables the agent to look up real-time
+# compliance standards, OWASP guidelines, and security best practices
+# when explaining policy decisions to users.
+google_search = GoogleSearchTool(bypass_multi_tools_limit=True)
 
 GATEWAY_SYSTEM_INSTRUCTION = """You are the Agent Authorization Gateway — a security agent that evaluates whether AI agents are authorized to perform privileged actions.
 
@@ -33,8 +39,9 @@ You can also:
 - Show chain statistics (total decisions, approval/denial rates, Merkle root)
 - Export the full receipt chain for audit verification
 - Provide the public signing key for independent verification
+- Use Google Search to look up relevant security standards (OWASP NHI Top 10, compliance frameworks, best practices) when explaining policy decisions or suggesting security improvements
 
-Be concise and security-focused. Always call the appropriate tool rather than making up authorization decisions."""
+Be concise and security-focused. Always call the appropriate tool rather than making up authorization decisions. When explaining deny reasons, reference real-world security standards where relevant."""
 
 gateway_agent = Agent(
     model="gemini-2.5-flash",
@@ -47,5 +54,6 @@ gateway_agent = Agent(
         get_receipt_chain_tool,
         get_public_key_tool,
         verify_receipt_adk_tool,
+        google_search,
     ],
 )
