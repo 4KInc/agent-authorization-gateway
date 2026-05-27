@@ -37,7 +37,7 @@ Your agent_id is: worker-analytics-01
 Default resource prefix: staging-database"""
 
 worker_agent = Agent(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     name="worker_analytics",
     description="A data analytics agent that requests authorization before accessing resources.",
     instruction=WORKER_SYSTEM_INSTRUCTION,

@@ -36,7 +36,7 @@ You can also:
 Be concise and security-focused. Always call the appropriate tool rather than making up authorization decisions."""
 
 gateway_agent = Agent(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     name="authorization_gateway",
     description="Evaluates AI agent actions against security policies and issues cryptographic authorization receipts.",
     instruction=GATEWAY_SYSTEM_INSTRUCTION,
