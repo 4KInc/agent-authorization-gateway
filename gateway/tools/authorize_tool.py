@@ -23,6 +23,20 @@ def _get_gateway() -> GatewayService:
     global _gateway
     if _gateway is None:
         _gateway = GatewayService(tenant="hackathon-demo")
+        # Resume chain from store if available
+        try:
+            store = _get_store()
+            chain = _run_async(store.get_chain(_gateway.tenant))
+            if chain:
+                last = chain[-1]
+                last_seq = int(last.get("body", {}).get("seq", 0))
+                last_hash = last.get("receipt_hash", "")
+                if last_seq > 0 and last_hash:
+                    _gateway._receipt_chain._seq = last_seq
+                    _gateway._receipt_chain._prev_receipt_hash = last_hash
+                    print(f"[adk-tool] Resumed chain at seq={last_seq}")
+        except Exception:
+            pass
     return _gateway
 
 
@@ -83,9 +97,18 @@ def authorize_action(
         parameters=params,
     )
 
-    # Persist receipt and stats (fire-and-forget in sync context)
+    # Persist receipt with action metadata for display
+    enriched = {
+        **response.receipt,
+        "_meta": {
+            "agent_id": agent_id,
+            "action": action,
+            "resource": resource,
+            "parameters": params,
+        },
+    }
     try:
-        _run_async(store.save_receipt(gateway.tenant, response.receipt))
+        _run_async(store.save_receipt(gateway.tenant, enriched))
         _run_async(store.save_stats(gateway.tenant, gateway.get_chain_stats()))
     except Exception:
         pass  # Don't fail authorization if persistence fails

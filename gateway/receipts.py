@@ -70,12 +70,19 @@ class Receipt:
 class ReceiptChain:
     """Manages a per-tenant receipt chain with signing."""
 
-    def __init__(self, tenant: str, private_key: Ed25519PrivateKey, kid: str):
+    def __init__(
+        self,
+        tenant: str,
+        private_key: Ed25519PrivateKey,
+        kid: str,
+        start_seq: int = 0,
+        start_prev_hash: str = GENESIS_PREV_RECEIPT,
+    ):
         self.tenant = tenant
         self._private_key = private_key
         self._kid = kid
-        self._seq = 0
-        self._prev_receipt_hash = GENESIS_PREV_RECEIPT
+        self._seq = start_seq
+        self._prev_receipt_hash = start_prev_hash
         self._receipts: list[Receipt] = []
 
     @property

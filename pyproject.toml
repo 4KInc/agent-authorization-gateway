@@ -12,6 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Heartlin Machado" }]
 dependencies = [
     "google-adk>=1.0.0",
+    "mcp>=1.0.0",
     "google-cloud-firestore>=2.19.0",
     "cryptography>=44.0.0",
     "PyJWT>=2.9.0",

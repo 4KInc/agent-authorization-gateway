@@ -104,13 +104,20 @@ def verify_receipt(envelope: dict, public_key_jwk: dict) -> VerificationResult:
     return result
 
 
-def verify_chain(envelopes: list[dict], public_key_jwk: dict) -> VerificationResult:
+def verify_chain(
+    envelopes: list[dict],
+    public_key_jwk: dict,
+    keys_by_kid: dict[str, dict] | None = None,
+) -> VerificationResult:
     """Verify a sequence of receipt envelopes.
 
     Checks everything verify_receipt checks, plus:
     1. Sequence numbers are monotonic and dense (1, 2, 3, ...)
     2. prev_receipt links are correct (hash chain integrity)
     3. First receipt points to genesis
+
+    If keys_by_kid is provided, each receipt's kid is looked up to find the
+    matching key. Falls back to public_key_jwk if no match found.
     """
     result = VerificationResult()
 
@@ -124,8 +131,12 @@ def verify_chain(envelopes: list[dict], public_key_jwk: dict) -> VerificationRes
     expected_seq = 1
 
     for i, envelope in enumerate(envelopes):
+        # Resolve the right key for this receipt
+        kid = envelope.get("sig", {}).get("kid", "")
+        key = (keys_by_kid or {}).get(kid, public_key_jwk)
+
         # Verify individual receipt
-        single = verify_receipt(envelope, public_key_jwk)
+        single = verify_receipt(envelope, key)
         if single.receipt_integrity == "FAIL":
             result.receipt_integrity = "FAIL"
             result.errors.extend(single.errors)

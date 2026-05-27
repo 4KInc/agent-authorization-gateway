@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Authorization Gateway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-alt: #f5f4f0;
+  --border: #e8e6e1;
+  --border-strong: #d4d1ca;
+  --text: #1a1916;
+  --text-secondary: #6b6860;
+  --text-tertiary: #9c9889;
+  --ink: #2c2a25;
+
+  --teal: #0d9488;
+  --teal-soft: #ccfbf1;
+  --teal-mid: #99f6e4;
+  --red: #dc2626;
+  --red-soft: #fee2e2;
+  --red-mid: #fca5a5;
+  --amber: #d97706;
+  --amber-soft: #fef3c7;
+  --slate: #475569;
+
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  --sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px;
+
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141312;
+    --surface: #1e1d1b;
+    --surface-alt: #262523;
+    --border: #333230;
+    --border-strong: #444240;
+    --text: #e8e6e1;
+    --text-secondary: #9c9889;
+    --text-tertiary: #6b6860;
+    --ink: #e8e6e1;
+    --teal-soft: #042f2e;
+    --teal-mid: #115e59;
+    --red-soft: #450a0a;
+    --red-mid: #7f1d1d;
+    --amber-soft: #451a03;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Layout */
+.shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+}
+
+/* Sidebar */
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: var(--space-8) var(--space-6);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-brand { margin-bottom: var(--space-10); }
+
+.sidebar-brand h1 {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.sidebar-brand p {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: var(--space-1);
+}
+
+.sidebar-status {
+  background: var(--surface-alt);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-8);
+  font-size: 12px;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+
+.status-row + .status-row { border-top: 1px solid var(--border); margin-top: var(--space-2); padding-top: var(--space-2); }
+
+.status-label { color: var(--text-tertiary); }
+.status-val { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.status-val.live { color: var(--teal); }
+.status-val.warn { color: var(--red); }
+
+.dot-live {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  margin-right: var(--space-2);
+  vertical-align: middle;
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+nav.sidebar-nav { flex: 1; }
+
+nav.sidebar-nav button {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  background: none;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+
+nav.sidebar-nav button:hover { background: var(--surface-alt); color: var(--text); }
+
+nav.sidebar-nav button[aria-selected="true"] {
+  background: var(--surface-alt);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+nav.sidebar-nav button .nav-method {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.nav-method.post { background: var(--amber-soft); color: var(--amber); }
+.nav-method.get { background: var(--teal-soft); color: var(--teal); }
+
+.nav-label { display: flex; flex-direction: column; gap: 1px; }
+.nav-label .nav-hint { font-size: 11px; font-weight: 400; color: var(--text-tertiary); }
+
+nav.sidebar-nav .nav-sep {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  padding: var(--space-5) var(--space-4) var(--space-2);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.sidebar-footer a { color: var(--teal); text-decoration: none; }
+.sidebar-footer a:hover { text-decoration: underline; }
+
+/* Main area */
+main {
+  padding: var(--space-10) var(--space-10);
+  max-width: 780px;
+}
+
+@media (max-width: 820px) {
+  main { padding: var(--space-6); max-width: 100%; }
+}
+
+/* Sections */
+section.view { display: none; }
+section.view.active { display: block; }
+
+section .view-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin-bottom: var(--space-1);
+}
+
+section .view-desc {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: var(--space-8);
+  max-width: 520px;
+}
+
+/* Metric strip */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+
+@media (max-width: 600px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
+
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5) var(--space-5);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.metric:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.metric-value.teal { color: var(--teal); }
+.metric-value.red { color: var(--red); }
+
+.metric-spark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.metric-spark svg { flex-shrink: 0; }
+
+/* Scenario buttons */
+.scenarios {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.scenario-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--surface);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.scenario-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.scenario-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+.scenario-btn.active {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.scenario-btn .sc-icon {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.sc-approve .sc-icon { background: var(--teal-soft); color: var(--teal); }
+.sc-deny .sc-icon { background: var(--red-soft); color: var(--red); }
+.sc-neutral .sc-icon { background: var(--surface-alt); color: var(--text-tertiary); }
+
+/* Form */
+.form-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 600px) { .field-row { grid-template-columns: 1fr; } }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field.full { grid-column: 1 / -1; }
+
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.field input, .field textarea {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.field input:focus, .field textarea:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.5;
+}
+
+/* Request preview */
+.request-preview {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.request-preview .rp-label {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+button.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-8);
+  background: var(--teal);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, box-shadow 0.15s;
+  min-height: 42px;
+  min-width: 140px;
+}
+
+button.primary:hover { opacity: 0.9; box-shadow: 0 2px 8px rgba(13,148,136,0.25); }
+button.primary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+button.primary:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+
+button.primary .spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+button.secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  min-height: 36px;
+}
+
+button.secondary:hover { border-color: var(--border-strong); color: var(--text); }
+button.secondary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* Decision banner */
+.decision-banner {
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-6);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.decision-banner.approve {
+  background: var(--teal-soft);
+  border: 1px solid var(--teal-mid);
+}
+
+.decision-banner.deny {
+  background: var(--red-soft);
+  border: 1px solid var(--red-mid);
+}
+
+.decision-icon {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.approve .decision-icon { background: var(--teal); color: #fff; }
+.deny .decision-icon { background: var(--red); color: #fff; }
+
+.decision-content { flex: 1; min-width: 0; }
+
+.decision-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: var(--space-1);
+}
+
+.approve .decision-title { color: var(--teal); }
+.deny .decision-title { color: var(--red); }
+
+.decision-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.reason-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--mono);
+}
+
+.approve .reason-chip { background: rgba(13,148,136,0.12); color: var(--teal); }
+.deny .reason-chip { background: rgba(220,38,38,0.1); color: var(--red); }
+
+.decision-meta {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.decision-meta span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.decision-meta .mono { font-family: var(--mono); font-size: 11px; }
+
+.decision-toggle {
+  margin-top: var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: var(--sans);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.decision-toggle:hover { color: var(--text); }
+
+/* Response output */
+.response { margin-top: var(--space-4); }
+
+.response-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+
+.response-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.response-dot.ok { background: var(--teal); }
+.response-dot.err { background: var(--red); }
+.response-dot.wait { background: var(--amber); animation: blink 1.2s ease-in-out infinite; }
+
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* Skeleton loading */
+.skeleton-block {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  min-height: 80px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-block::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+.response pre {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* Verify result banner */
+.verify-banner {
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-6);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.verify-banner.valid { background: var(--teal-soft); border: 1px solid var(--teal-mid); }
+.verify-banner.invalid { background: var(--red-soft); border: 1px solid var(--red-mid); }
+
+.verify-banner .vb-icon { font-size: 24px; flex-shrink: 0; }
+.verify-banner .vb-text { font-size: 15px; font-weight: 600; }
+.valid .vb-text { color: var(--teal); }
+.invalid .vb-text { color: var(--red); }
+.verify-banner .vb-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+
+/* Audit log table */
+.audit-log { margin-top: var(--space-4); }
+
+.audit-empty {
+  text-align: center;
+  padding: var(--space-12) var(--space-8);
+  color: var(--text-tertiary);
+  font-size: 14px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.audit-empty strong {
+  display: block;
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.audit-empty button {
+  margin-top: var(--space-4);
+}
+
+.audit-filters {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.audit-filter-btn {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--surface);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.audit-filter-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.audit-filter-btn.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.audit-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+
+.audit-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.audit-table tr:hover td { background: var(--surface-alt); }
+
+.audit-table .col-seq {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  width: 48px;
+}
+
+.audit-table .col-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  width: 90px;
+}
+
+.audit-table .col-agent {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-table .col-action { font-weight: 500; }
+
+.audit-table .col-receipt {
+  width: 80px;
+}
+
+.view-receipt-btn {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--teal);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.view-receipt-btn:hover { text-decoration: underline; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pill-approve { background: var(--teal-soft); color: var(--teal); }
+.pill-deny { background: var(--red-soft); color: var(--red); }
+
+/* Verify layout */
+.verify-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+@media (max-width: 720px) { .verify-split { grid-template-columns: 1fr; } }
+
+.verify-split .form-card { margin-bottom: 0; }
+.verify-split .response { margin-top: 0; }
+
+/* Receipt modal */
+.receipt-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.receipt-modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  max-width: 600px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: var(--space-6);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+
+.receipt-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+.receipt-modal-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.receipt-modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: var(--space-2);
+  line-height: 1;
+}
+
+.receipt-modal-close:hover { color: var(--text); }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0s !important; transition-duration: 0s !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar" role="navigation" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <h1>Agent Authorization<br>Gateway</h1>
+      <p>Cryptographic policy enforcement</p>
+    </div>
+
+    <div class="sidebar-status" aria-label="Gateway status">
+      <div class="status-row">
+        <span class="status-label">Status</span>
+        <span class="status-val live" id="sHealth"><span class="dot-live" aria-hidden="true"></span>Loading</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Tenant</span>
+        <span class="status-val" id="sTenant">--</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Policy</span>
+        <span class="status-val" id="sPolicy" title="">--</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Views">
+      <div class="nav-sep">Actions</div>
+      <button data-view="authorize" aria-selected="true">
+        <span class="nav-method post">POST</span>
+        <span class="nav-label">Authorize<span class="nav-hint">Evaluate an agent action</span></span>
+      </button>
+      <button data-view="verify-receipt">
+        <span class="nav-method post">POST</span>
+        <span class="nav-label">Verify Receipt<span class="nav-hint">Check a single signature</span></span>
+      </button>
+      <button data-view="verify-chain">
+        <span class="nav-method post">POST</span>
+        <span class="nav-label">Verify Chain<span class="nav-hint">Full chain integrity check</span></span>
+      </button>
+      <div class="nav-sep">Inspect</div>
+      <button data-view="chain">
+        <span class="nav-method get">GET</span>
+        <span class="nav-label">Audit Log<span class="nav-hint">Browse all decisions</span></span>
+      </button>
+      <button data-view="keys">
+        <span class="nav-method get">GET</span>
+        <span class="nav-label">Public Keys<span class="nav-hint">Ed25519 signing key (JWK)</span></span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      v0.1.0<br>
+      <a href="/docs">API Docs</a> &middot; <a href="/health">Health</a>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main>
+
+    <!-- ========== AUTHORIZE ========== -->
+    <section id="v-authorize" class="view active">
+      <h2 class="view-title">Authorize an Action</h2>
+      <p class="view-desc">Submit an agent action for policy evaluation. The gateway returns a signed receipt and optional bearer token.</p>
+
+      <div class="metrics">
+        <div class="metric" onclick="navTo('chain')" title="View audit log">
+          <div class="metric-label">Total</div>
+          <div class="metric-value" id="mTotal">0</div>
+          <div class="metric-spark" id="mTotalSpark"></div>
+        </div>
+        <div class="metric" onclick="navTo('chain','approve')" title="View approved actions">
+          <div class="metric-label">Approved</div>
+          <div class="metric-value teal" id="mApproved">0</div>
+          <div class="metric-spark" id="mApprovedSpark"></div>
+        </div>
+        <div class="metric" onclick="navTo('chain','deny')" title="View denied actions">
+          <div class="metric-label">Denied</div>
+          <div class="metric-value red" id="mDenied">0</div>
+          <div class="metric-spark" id="mDeniedSpark"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Approval Rate</div>
+          <div class="metric-value" id="mRate">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="scenarios" role="group" aria-label="Quick-fill scenarios">
+        <button class="scenario-btn sc-approve" onclick="fillAuth('agent-1','transfer','wallet:treasury','{&quot;amount&quot;:500}',this)">
+          <span class="sc-icon" aria-hidden="true">&#8594;</span>Transfer $500
+        </button>
+        <button class="scenario-btn sc-approve" onclick="fillAuth('agent-1','read','db:users','{}',this)">
+          <span class="sc-icon" aria-hidden="true">&#9673;</span>Read DB
+        </button>
+        <button class="scenario-btn sc-neutral" onclick="fillAuth('agent-1','deploy','prod:api','{}',this)">
+          <span class="sc-icon" aria-hidden="true">&#9650;</span>Deploy Prod
+        </button>
+        <button class="scenario-btn sc-deny" onclick="fillAuth('rogue-agent','delete','db:production','{&quot;force&quot;:true}',this)">
+          <span class="sc-icon" aria-hidden="true">&#10005;</span>Rogue Delete
+        </button>
+      </div>
+
+      <div class="form-card">
+        <div class="field-row">
+          <div class="field">
+            <label for="authAgent">Agent ID</label>
+            <input id="authAgent" type="text" value="agent-1" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="authAction">Action</label>
+            <input id="authAction" type="text" value="transfer" autocomplete="off" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="authResource">Resource</label>
+            <input id="authResource" type="text" value="wallet:treasury" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="authParams">Parameters</label>
+            <input id="authParams" type="text" value='{"amount": 500}' autocomplete="off" />
+          </div>
+        </div>
+        <div id="requestPreview" class="request-preview">
+          <span class="rp-label">Preview</span>
+          <span id="rpText">agent-1 &rarr; transfer on wallet:treasury</span>
+        </div>
+        <div class="form-actions">
+          <button class="primary" id="authBtn" onclick="doAuthorize()">Authorize</button>
+        </div>
+      </div>
+
+      <div class="response" id="authResponse"></div>
+    </section>
+
+    <!-- ========== VERIFY RECEIPT ========== -->
+    <section id="v-verify-receipt" class="view">
+      <h2 class="view-title">Verify Receipt</h2>
+      <p class="view-desc">Independently verify an Ed25519 receipt signature. Paste the full receipt envelope or use one from a previous authorization.</p>
+
+      <div class="verify-split">
+        <div class="form-card">
+          <div class="field full">
+            <label for="verifyReceiptInput">Receipt envelope (JSON)</label>
+            <textarea id="verifyReceiptInput" rows="10" placeholder='{
+  "body": {
+    "v": "1",
+    "tenant": "hackathon-demo",
+    "seq": 1,
+    "decision": "approve",
+    "agent_id": "agent-1",
+    "action": "transfer",
+    "resource": "wallet:treasury",
+    ...
+  },
+  "sig": "base64...",
+  "receipt_hash": "sha256:..."
+}'></textarea>
+          </div>
+          <div class="form-actions" style="margin-top: var(--space-4);">
+            <button class="primary" id="vrBtn" onclick="doVerifyReceipt()">Verify Signature</button>
+            <button class="secondary" onclick="pasteLastReceipt()">Paste last receipt</button>
+          </div>
+        </div>
+
+        <div class="response" id="verifyReceiptResponse">
+          <div style="color:var(--text-tertiary);font-size:14px;padding:var(--space-8) var(--space-4);text-align:center;">
+            <strong style="display:block;color:var(--text-secondary);margin-bottom:var(--space-2);">Result will appear here</strong>
+            Paste a receipt and click Verify to check its cryptographic integrity.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== VERIFY CHAIN ========== -->
+    <section id="v-verify-chain" class="view">
+      <h2 class="view-title">Verify Chain</h2>
+      <p class="view-desc">Fetch the full receipt chain and verify every signature, sequence number, and hash link from genesis to tip.</p>
+
+      <div class="verify-split">
+        <div class="form-card">
+          <p style="color:var(--text-secondary); font-size: 14px; margin-bottom: var(--space-3);">
+            Fetches all receipts from <code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 6px;border-radius:3px;">/chain</code> and verifies:
+          </p>
+          <ul style="color:var(--text-secondary);font-size:13px;padding-left:var(--space-5);margin-bottom:var(--space-5);line-height:1.8;">
+            <li>Ed25519 signature on every receipt</li>
+            <li>Monotonic, dense sequence numbers</li>
+            <li>Unbroken <code style="font-family:var(--mono);font-size:11px;">prev_receipt</code> hash linkage</li>
+            <li>Genesis receipt starts from null</li>
+          </ul>
+          <div class="form-actions">
+            <button class="primary" id="vcBtn" onclick="doVerifyChain()">Verify Full Chain</button>
+          </div>
+        </div>
+
+        <div class="response" id="verifyChainResponse">
+          <div style="color:var(--text-tertiary);font-size:14px;padding:var(--space-8) var(--space-4);text-align:center;">
+            <strong style="display:block;color:var(--text-secondary);margin-bottom:var(--space-2);">Chain verification</strong>
+            Click Verify to run a full integrity check on the receipt chain.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== AUDIT LOG ========== -->
+    <section id="v-chain" class="view">
+      <h2 class="view-title">Audit Log</h2>
+      <p class="view-desc">Every authorization decision, recorded as a cryptographically linked receipt chain.</p>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);flex-wrap:wrap;gap:var(--space-3);">
+        <div class="audit-filters" id="auditFilters">
+          <button class="audit-filter-btn active" data-filter="all" onclick="filterAudit('all',this)">All</button>
+          <button class="audit-filter-btn" data-filter="approve" onclick="filterAudit('approve',this)">Approved</button>
+          <button class="audit-filter-btn" data-filter="deny" onclick="filterAudit('deny',this)">Denied</button>
+        </div>
+        <button class="secondary" onclick="loadChain()">Refresh</button>
+      </div>
+
+      <div class="audit-log" id="chainTimeline">
+        <div class="audit-empty">Loading...</div>
+      </div>
+    </section>
+
+    <!-- ========== KEYS ========== -->
+    <section id="v-keys" class="view">
+      <h2 class="view-title">Public Keys</h2>
+      <p class="view-desc">The gateway's Ed25519 signing key. Any third party can use this to verify receipts without trusting the gateway.</p>
+
+      <div class="form-card">
+        <p style="color:var(--text-secondary); font-size: 14px; margin-bottom: var(--space-4);">
+          This key is generated per gateway instance. Distribute it to auditors so they can independently verify receipt signatures using standard Ed25519 verification.
+        </p>
+        <div class="form-actions">
+          <button class="primary" id="keysBtn" onclick="loadKeys()">Fetch Keys</button>
+        </div>
+      </div>
+
+      <div class="response" id="keysResponse"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Receipt detail modal -->
+<div class="receipt-modal-overlay" id="receiptModal" style="display:none;" onclick="if(event.target===this)closeModal()">
+  <div class="receipt-modal" role="dialog" aria-label="Receipt detail">
+    <div class="receipt-modal-header">
+      <h3>Receipt Detail</h3>
+      <button class="receipt-modal-close" onclick="closeModal()" aria-label="Close">&times;</button>
+    </div>
+    <pre id="receiptModalBody" style="background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-5);font-family:var(--mono);font-size:12px;line-height:1.65;overflow-x:auto;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;color:var(--text);"></pre>
+  </div>
+</div>
+
+<script>
+const BASE = '';
+let lastReceipt = null;
+let allReceipts = [];
+let currentFilter = 'all';
+
+/* --- Navigation --- */
+function navTo(view, filter) {
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-selected', 'false'));
+  const btn = document.querySelector('[data-view="' + view + '"]');
+  if (btn) btn.setAttribute('aria-selected', 'true');
+  document.querySelectorAll('section.view').forEach(s => s.classList.remove('active'));
+  document.getElementById('v-' + view).classList.add('active');
+  if (filter) {
+    currentFilter = filter;
+    renderChain();
+    document.querySelectorAll('.audit-filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === filter);
+    });
+  }
+}
+
+document.querySelectorAll('[data-view]').forEach(btn => {
+  btn.addEventListener('click', () => navTo(btn.dataset.view));
+});
+
+/* --- Helpers --- */
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(BASE + path, opts);
+  return { ok: r.ok, data: await r.json() };
+}
+
+function btnLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  if (loading) {
+    btn._origText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span>';
+    btn.disabled = true;
+    // Disable sibling inputs in the same form card
+    const card = btn.closest('.form-card') || btn.closest('section');
+    if (card) card.querySelectorAll('input,textarea').forEach(i => i.disabled = true);
+  } else {
+    btn.innerHTML = btn._origText || btn.innerHTML;
+    btn.disabled = false;
+    const card = btn.closest('.form-card') || btn.closest('section');
+    if (card) card.querySelectorAll('input,textarea').forEach(i => i.disabled = false);
+  }
+}
+
+function toggleDetails(btn) {
+  const target = btn.nextElementSibling;
+  const open = target.style.display !== 'none';
+  target.style.display = open ? 'none' : 'block';
+  btn.innerHTML = open ? 'View evaluation details &#9662;' : 'Hide evaluation details &#9652;';
+}
+
+function showSkeleton(id) {
+  document.getElementById(id).innerHTML = '<div class="skeleton-block"></div>';
+}
+
+function humanizeReason(code) {
+  return code.replace(/_/g, ' ').replace(/:/g, ' \u2014 ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/* --- Request preview --- */
+['authAgent','authAction','authResource'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updatePreview);
+});
+
+function updatePreview() {
+  const a = document.getElementById('authAgent').value || '?';
+  const act = document.getElementById('authAction').value || '?';
+  const r = document.getElementById('authResource').value || '?';
+  document.getElementById('rpText').innerHTML = esc(a) + ' &rarr; ' + esc(act) + ' on ' + esc(r);
+}
+
+/* --- Authorize --- */
+function fillAuth(agent, action, resource, params, btnEl) {
+  document.getElementById('authAgent').value = agent;
+  document.getElementById('authAction').value = action;
+  document.getElementById('authResource').value = resource;
+  document.getElementById('authParams').value = params;
+  updatePreview();
+  document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+}
+
+async function doAuthorize() {
+  btnLoading('authBtn', true);
+  showSkeleton('authResponse');
+  try {
+    let params = {};
+    try { params = JSON.parse(document.getElementById('authParams').value || '{}'); } catch(e) {}
+    const { ok, data } = await api('POST', '/authorize', {
+      agent_id: document.getElementById('authAgent').value,
+      action: document.getElementById('authAction').value,
+      resource: document.getElementById('authResource').value,
+      parameters: params
+    });
+    if (data.receipt) lastReceipt = data.receipt;
+    showAuthResult(data, ok);
+    loadStats();
+    loadChain();
+  } catch(e) {
+    showGenericResult('authResponse', { error: e.message }, false);
+  }
+  btnLoading('authBtn', false);
+}
+
+function showAuthResult(data, ok) {
+  const el = document.getElementById('authResponse');
+  if (!ok || !data.decision) {
+    showGenericResult('authResponse', data, ok);
+    return;
+  }
+
+  const isApprove = data.decision.toLowerCase() === 'approve';
+  const cls = isApprove ? 'approve' : 'deny';
+  const icon = isApprove ? '&#10003;' : '&#10007;';
+
+  // Build a contextual title using the action+resource from the receipt
+  const rb = data.receipt?.body || {};
+  const actionDesc = rb.action ? esc(rb.action) : '';
+  const resourceDesc = rb.resource ? esc(rb.resource) : '';
+  const contextStr = actionDesc && resourceDesc ? actionDesc + ' on ' + resourceDesc : '';
+  const title = isApprove
+    ? (contextStr ? 'Approved: ' + contextStr : 'Action Approved')
+    : (contextStr ? 'Denied: ' + contextStr : 'Action Denied');
+
+  const reasons = (data.reason_codes || []).map(r =>
+    '<span class="reason-chip">' + esc(humanizeReason(r)) + '</span>'
+  ).join('');
+
+  const policyVer = rb.policy_version || '';
+  const policyShort = policyVer.length > 20 ? policyVer.slice(0, 20) + '\u2026' : policyVer;
+  const digest = data.action_digest ? data.action_digest.slice(0, 24) + '\u2026' : '';
+  const hash = data.receipt_hash ? data.receipt_hash.slice(0, 24) + '\u2026' : '';
+
+  let html = '<div class="decision-banner ' + cls + '">' +
+    '<div class="decision-icon" aria-hidden="true">' + icon + '</div>' +
+    '<div class="decision-content">' +
+      '<div class="decision-title">' + title + '</div>';
+
+  if (reasons) html += '<div class="decision-reasons">' + reasons + '</div>';
+
+  html += '<div class="decision-meta">';
+  if (policyShort) html += '<span>Policy: <span class="mono">' + esc(policyShort) + '</span></span>';
+  if (rb.seq != null) html += '<span>Receipt #' + rb.seq + '</span>';
+  html += '</div>';
+
+  if (data.token && isApprove) {
+    html += '<div style="margin-top:var(--space-3);font-size:12px;color:var(--text-secondary);">' +
+      'Bearer token issued &mdash; valid for 60 seconds, single use</div>';
+  }
+
+  html += '<button class="decision-toggle" onclick="toggleDetails(this)">' +
+    'View evaluation details &#9662;</button>' +
+    '<div style="display:none;margin-top:var(--space-3);">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-3);font-size:12px;">' +
+        '<div style="background:var(--surface-alt);border-radius:var(--radius-sm);padding:var(--space-3) var(--space-4);">' +
+          '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary);display:block;margin-bottom:2px;">Action Digest</span>' +
+          '<span class="mono" style="font-size:11px;word-break:break-all;">' + esc(data.action_digest || 'n/a') + '</span></div>' +
+        '<div style="background:var(--surface-alt);border-radius:var(--radius-sm);padding:var(--space-3) var(--space-4);">' +
+          '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary);display:block;margin-bottom:2px;">Receipt Hash</span>' +
+          '<span class="mono" style="font-size:11px;word-break:break-all;">' + esc(data.receipt_hash || 'n/a') + '</span></div>' +
+      '</div>' +
+      '<pre style="background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);font-family:var(--mono);font-size:11px;line-height:1.6;overflow-x:auto;max-height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;color:var(--text);">' +
+      esc(JSON.stringify(data, null, 2)) + '</pre></div>';
+
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+function showGenericResult(id, data, ok) {
+  const el = document.getElementById(id);
+  const cls = ok ? 'ok' : 'err';
+  const label = ok ? 'OK' : 'Error';
+  el.innerHTML = '<div class="response-bar"><span class="response-dot ' + cls + '"></span>' + label + '</div>' +
+    '<pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+}
+
+function showVerifyResult(id, data, ok, receiptCount) {
+  const el = document.getElementById(id);
+  if (!ok) { showGenericResult(id, data, false); return; }
+
+  const integrity = (data.receipt_integrity || '').toUpperCase();
+  const chain = (data.chain_validity || '').toUpperCase();
+  const isValid = integrity === 'VALID' || integrity === 'OK' || integrity === 'PASS';
+  const cls = isValid ? 'valid' : 'invalid';
+  const icon = isValid ? '&#10003;' : '&#10007;';
+  const errCount = (data.errors || []).length;
+
+  let text, sub;
+  if (receiptCount) {
+    text = isValid
+      ? 'Chain verified \u2014 ' + receiptCount + ' receipt' + (receiptCount !== 1 ? 's' : '') + ' checked, ' + errCount + ' failure' + (errCount !== 1 ? 's' : '')
+      : 'Chain verification failed \u2014 ' + errCount + ' error' + (errCount !== 1 ? 's' : '') + ' in ' + receiptCount + ' receipt' + (receiptCount !== 1 ? 's' : '');
+    sub = chain !== 'INCONCLUSIVE' ? 'Chain linkage: ' + chain + ' \u00b7 Signatures: ' + integrity : 'Signatures: ' + integrity;
+  } else {
+    text = isValid ? 'Signature Valid' : 'Verification Failed';
+    sub = chain !== 'INCONCLUSIVE' ? 'Chain: ' + chain : '';
+  }
+
+  let html = '<div class="verify-banner ' + cls + '">' +
+    '<span class="vb-icon" aria-hidden="true">' + icon + '</span>' +
+    '<div><div class="vb-text">' + text + '</div>';
+  if (sub) html += '<div class="vb-sub">' + esc(sub) + '</div>';
+  html += '</div></div>';
+
+  if (data.errors && data.errors.length > 0) {
+    html += '<div class="decision-reasons" style="margin-bottom:var(--space-3);">';
+    data.errors.forEach(e => {
+      html += '<span class="reason-chip" style="background:var(--red-soft);color:var(--red);">' + esc(e.error || JSON.stringify(e)) + '</span>';
+    });
+    html += '</div>';
+  }
+
+  html += '<button class="decision-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">' +
+    'View raw response &#9662;</button>' +
+    '<pre style="display:none;margin-top:var(--space-3);background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);font-family:var(--mono);font-size:11px;line-height:1.6;overflow-x:auto;max-height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;color:var(--text);">' +
+    esc(JSON.stringify(data, null, 2)) + '</pre>';
+
+  el.innerHTML = html;
+}
+
+/* --- Verify Receipt --- */
+function pasteLastReceipt() {
+  if (lastReceipt) document.getElementById('verifyReceiptInput').value = JSON.stringify(lastReceipt, null, 2);
+}
+
+async function doVerifyReceipt() {
+  btnLoading('vrBtn', true);
+  showSkeleton('verifyReceiptResponse');
+  try {
+    const receipt = JSON.parse(document.getElementById('verifyReceiptInput').value);
+    const { ok, data } = await api('POST', '/verify-receipt', { receipt });
+    showVerifyResult('verifyReceiptResponse', data, ok);
+  } catch(e) { showGenericResult('verifyReceiptResponse', { error: e.message }, false); }
+  btnLoading('vrBtn', false);
+}
+
+/* --- Verify Chain --- */
+async function doVerifyChain() {
+  btnLoading('vcBtn', true);
+  showSkeleton('verifyChainResponse');
+  try {
+    const chain = await api('GET', '/chain');
+    if (!chain.data.receipts || chain.data.receipts.length === 0) {
+      document.getElementById('verifyChainResponse').innerHTML =
+        '<div style="color:var(--text-tertiary);font-size:14px;padding:var(--space-6);text-align:center;">' +
+        '<strong style="display:block;color:var(--text-secondary);margin-bottom:var(--space-2);">No receipts to verify</strong>' +
+        'Authorize some actions first to build a chain.</div>';
+      btnLoading('vcBtn', false);
+      return;
+    }
+    const count = chain.data.receipts.length;
+    const { ok, data } = await api('POST', '/verify-chain', { receipts: chain.data.receipts });
+    showVerifyResult('verifyChainResponse', data, ok, count);
+  } catch(e) { showGenericResult('verifyChainResponse', { error: e.message }, false); }
+  btnLoading('vcBtn', false);
+}
+
+/* --- Audit Log --- */
+function filterAudit(filter, btnEl) {
+  currentFilter = filter;
+  document.querySelectorAll('.audit-filter-btn').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  renderChain();
+}
+
+function renderChain() {
+  const el = document.getElementById('chainTimeline');
+  let list = allReceipts;
+  if (currentFilter !== 'all') {
+    list = list.filter(r => (r.body?.decision || '').toLowerCase() === currentFilter);
+  }
+
+  if (list.length === 0 && allReceipts.length === 0) {
+    el.innerHTML = '<div class="audit-empty">' +
+      '<strong>No receipts yet</strong>' +
+      'Authorize an action to create the first entry in the chain.' +
+      '<br><button class="primary" style="margin-top:var(--space-4);" onclick="navTo(\'authorize\')">Go to Authorize</button>' +
+      '</div>';
+    return;
+  }
+
+  if (list.length === 0) {
+    el.innerHTML = '<div class="audit-empty"><strong>No matching receipts</strong>Try a different filter.</div>';
+    return;
+  }
+
+  let html = '<table class="audit-table"><thead><tr>' +
+    '<th>Seq</th><th>Time</th><th>Agent</th><th>Action</th><th>Resource</th><th>Decision</th><th></th>' +
+    '</tr></thead><tbody>';
+
+  list.slice().reverse().forEach((r, i) => {
+    const b = r.body || {};
+    const m = r._meta || {};
+    const d = (b.decision || '').toLowerCase();
+    const pill = d === 'approve' ? 'pill-approve' : 'pill-deny';
+    const ts = b.ts ? new Date(b.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+
+    html += '<tr>' +
+      '<td class="col-seq">#' + (b.seq != null ? b.seq : '?') + '</td>' +
+      '<td class="col-time">' + ts + '</td>' +
+      '<td class="col-agent">' + esc(m.agent_id || '') + '</td>' +
+      '<td class="col-action">' + esc(m.action || '') + '</td>' +
+      '<td class="col-action">' + esc(m.resource || '') + '</td>' +
+      '<td><span class="pill ' + pill + '">' + esc(b.decision || '') + '</span></td>' +
+      '<td class="col-receipt"><button class="view-receipt-btn" onclick=\'showReceipt(' + i + ')\'>View</button></td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+async function loadChain() {
+  const el = document.getElementById('chainTimeline');
+  el.innerHTML = '<div class="skeleton-block" style="min-height:120px;"></div>';
+  try {
+    const { data } = await api('GET', '/chain');
+    allReceipts = data.receipts || [];
+    renderChain();
+  } catch(e) { el.innerHTML = '<div class="audit-empty" style="color:var(--red)">Failed to load chain</div>'; }
+}
+
+/* --- Receipt modal --- */
+function showReceipt(reverseIdx) {
+  const list = allReceipts.filter(r => currentFilter === 'all' || (r.body?.decision||'').toLowerCase() === currentFilter);
+  const r = list.slice().reverse()[reverseIdx];
+  if (!r) return;
+  document.getElementById('receiptModalBody').textContent = JSON.stringify(r, null, 2);
+  document.getElementById('receiptModal').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('receiptModal').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+/* --- Keys --- */
+async function loadKeys() {
+  btnLoading('keysBtn', true);
+  showSkeleton('keysResponse');
+  try {
+    const { ok, data } = await api('GET', '/keys');
+    showGenericResult('keysResponse', data, ok);
+  } catch(e) { showGenericResult('keysResponse', { error: e.message }, false); }
+  btnLoading('keysBtn', false);
+}
+
+/* --- Stats --- */
+let prevStats = null;
+
+async function loadStats() {
+  try {
+    const { data } = await api('GET', '/stats');
+    document.getElementById('mTotal').textContent = data.total_receipts;
+    document.getElementById('mApproved').textContent = data.approvals;
+    document.getElementById('mDenied').textContent = data.denials;
+    const rate = data.total_receipts > 0 ? Math.round((data.approvals / data.total_receipts) * 100) + '%' : '\u2014';
+    document.getElementById('mRate').textContent = rate;
+
+    // Trend indicators
+    if (prevStats) {
+      showDelta('mTotalSpark', data.total_receipts - prevStats.total_receipts);
+      showDelta('mApprovedSpark', data.approvals - prevStats.approvals, 'teal');
+      showDelta('mDeniedSpark', data.denials - prevStats.denials, 'red');
+    }
+    prevStats = data;
+
+    const pv = data.policy_version || '';
+    document.getElementById('sPolicy').textContent = pv.length > 16 ? pv.slice(0, 16) + '\u2026' : pv;
+    document.getElementById('sPolicy').title = pv;
+  } catch(e) {}
+}
+
+function showDelta(id, delta, color) {
+  const el = document.getElementById(id);
+  if (!el || delta === 0) { if(el) el.innerHTML = ''; return; }
+  const arrow = delta > 0 ? '\u2191' : '\u2193';
+  const c = color || 'var(--text-secondary)';
+  el.innerHTML = '<span style="color:' + c + '">' + arrow + ' ' + Math.abs(delta) + ' new</span>';
+}
+
+async function loadHealth() {
+  try {
+    const { data } = await api('GET', '/health');
+    const el = document.getElementById('sHealth');
+    if (data.status === 'healthy') {
+      el.innerHTML = '<span class="dot-live" aria-hidden="true"></span>Healthy';
+      el.className = 'status-val live';
+    } else {
+      el.textContent = data.status;
+    }
+    document.getElementById('sTenant').textContent = data.tenant || '--';
+  } catch(e) {
+    const el = document.getElementById('sHealth');
+    el.textContent = 'Unreachable';
+    el.className = 'status-val warn';
+  }
+}
+
+/* Init */
+loadHealth();
+loadStats();
+loadChain();
+</script>
+</body>
+</html>

@@ -1,20 +1,39 @@
-"""Worker Agent — a data analytics agent that requests authorization before acting.
+"""Worker Agent — a data analytics agent that requests authorization via MCP.
 
-This agent demonstrates the full authorize → execute flow:
+This agent demonstrates the full authorize → execute flow using MCP:
 1. User asks for data
-2. Worker calls authorize_action (via Gateway sub-agent transfer)
+2. Worker calls authorize_action via MCP (Gateway's MCP server)
 3. Gateway evaluates policy, signs receipt, returns token
 4. Worker executes the action using the scoped token
 5. Worker returns results to user
 
-In the multi-agent architecture, the user talks to the Orchestrator,
-which delegates to either the Worker or the Gateway based on intent.
+The MCP connection means the Worker and Gateway are decoupled —
+they can run as separate services, and any MCP-compatible agent
+framework can connect to the Gateway.
 """
 
-from google.adk.agents import Agent
+import os
 
-from gateway.tools.authorize_tool import authorize_action_tool
+from google.adk.agents import Agent
+from google.adk.tools import McpToolset
+from google.adk.tools.mcp_tool import StreamableHTTPConnectionParams
+
 from .tools import query_database_tool, search_analytics_tool, list_datasets_tool
+
+# MCP connection to the Gateway's authorization tools
+GATEWAY_MCP_URL = os.environ.get(
+    "GATEWAY_MCP_URL",
+    "http://localhost:8090/mcp",
+)
+
+gateway_mcp_toolset = McpToolset(
+    connection_params=StreamableHTTPConnectionParams(
+        url=GATEWAY_MCP_URL,
+        timeout=10.0,
+    ),
+    # Only import the authorization tool — the worker doesn't need stats/chain/keys
+    tool_filter=["authorize_action"],
+)
 
 WORKER_SYSTEM_INSTRUCTION = """You are a Data Analytics Worker Agent. Your job is to help users analyze data by querying databases and accessing resources.
 
@@ -48,10 +67,10 @@ Your agent_id is: worker-analytics-01"""
 worker_agent = Agent(
     model="gemini-2.5-flash",
     name="worker_analytics",
-    description="A data analytics agent that queries databases and APIs. Always requests authorization from the Gateway before accessing any resource. Use this agent when the user wants to read data, run queries, search analytics, or list datasets.",
+    description="A data analytics agent that queries databases and APIs. Always requests authorization from the Gateway via MCP before accessing any resource. Use this agent when the user wants to read data, run queries, search analytics, or list datasets.",
     instruction=WORKER_SYSTEM_INSTRUCTION,
     tools=[
-        authorize_action_tool,
+        gateway_mcp_toolset,
         query_database_tool,
         search_analytics_tool,
         list_datasets_tool,
