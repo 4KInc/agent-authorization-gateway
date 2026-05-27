@@ -12,16 +12,23 @@ Runs alongside the ADK agent, providing direct HTTP access for:
 
 from __future__ import annotations
 
-import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 from .gateway_service import GatewayService
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
+
+logger = logging.getLogger("gateway.api")
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}',
+)
 
 # Module-level state
 _gateway: GatewayService | None = None
@@ -45,10 +52,17 @@ def _get_store() -> ReceiptStore:
 # --- Request/Response models ---
 
 class AuthorizeRequest(BaseModel):
-    agent_id: str
-    action: str
-    resource: str
+    agent_id: str = Field(..., min_length=1, max_length=256, description="Unique agent identifier")
+    action: str = Field(..., min_length=1, max_length=256, description="Action to authorize")
+    resource: str = Field(..., min_length=1, max_length=512, description="Target resource")
     parameters: dict | None = None
+
+    @field_validator("agent_id", "action", "resource")
+    @classmethod
+    def no_empty_whitespace(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty or whitespace-only")
+        return v.strip()
 
 
 class AuthorizeResponse(BaseModel):
@@ -93,6 +107,24 @@ async def lifespan(app: FastAPI):
         gateway = _get_gateway()
         store = _get_store()
 
+        # Load policy from Firestore if available (runtime-configurable policies)
+        stored_policy = await store.get_policy(gateway.tenant)
+        if stored_policy and "rules" in stored_policy:
+            from .policy import Policy, PolicyRule, PolicyEngine
+            rules = [PolicyRule(id=r["id"], type=r["type"], config=r["config"]) for r in stored_policy["rules"]]
+            policy = Policy(rules=rules, version=stored_policy.get("version", "1"))
+            gateway.policy = policy
+            gateway._policy_engine = PolicyEngine(policy)
+            logger.info(f"Loaded policy from Firestore: {len(rules)} rules, hash={policy.policy_hash()[:24]}")
+        else:
+            # Save default policy to Firestore for future editing
+            demo = gateway.policy
+            await store.save_policy(gateway.tenant, {
+                "version": demo.version,
+                "rules": [{"id": r.id, "type": r.type, "config": r.config} for r in demo.rules],
+            })
+            logger.info("Saved default policy to Firestore")
+
         # Resume chain from Firestore so new receipts continue the sequence
         stored_chain = await store.get_chain(gateway.tenant)
         if stored_chain:
@@ -102,7 +134,7 @@ async def lifespan(app: FastAPI):
             if last_seq > 0 and last_hash:
                 gateway._receipt_chain._seq = last_seq
                 gateway._receipt_chain._prev_receipt_hash = last_hash
-                print(f"[startup] Resumed chain at seq={last_seq}")
+                logger.info(f"Resumed chain at seq={last_seq}")
 
         # Merge this instance's key into the shared key set
         my_key = gateway.get_public_key_jwk()
@@ -113,7 +145,7 @@ async def lifespan(app: FastAPI):
             all_keys.append(my_key)
         await store.save_keys(gateway.tenant, {"tenant": gateway.tenant, "keys": all_keys})
     except Exception as e:
-        print(f"[startup] Store init warning (non-fatal): {e}")
+        logger.warning(f"Store init (non-fatal): {e}")
     yield
 
 
@@ -123,6 +155,24 @@ api_app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@api_app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = round((time.time() - start) * 1000)
+    logger.info(f"{request.method} {request.url.path} {response.status_code} {duration_ms}ms")
+    return response
+
+
+@api_app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_server_error", "detail": "An unexpected error occurred."},
+    )
 
 
 @api_app.get("/", response_class=HTMLResponse)
@@ -315,6 +365,64 @@ async def get_keys():
     return {
         "tenant": gateway.tenant,
         "keys": [gateway.get_public_key_jwk()],
+    }
+
+
+@api_app.get("/policy")
+async def get_policy():
+    """Get the current security policy."""
+    gateway = _get_gateway()
+    return {
+        "tenant": gateway.tenant,
+        "version": gateway.policy.version,
+        "policy_hash": gateway.policy.policy_hash(),
+        "rules": [
+            {"id": r.id, "type": r.type, "config": r.config}
+            for r in gateway.policy.rules
+        ],
+    }
+
+
+class UpdatePolicyRequest(BaseModel):
+    version: str = Field(default="1", description="Policy version")
+    rules: list[dict] = Field(..., description="List of policy rules")
+
+
+@api_app.put("/policy")
+async def update_policy(req: UpdatePolicyRequest):
+    """Update the security policy at runtime.
+
+    Policy changes take effect immediately and are persisted to Firestore.
+    The new policy hash is bound to all subsequent receipts.
+    """
+    from .policy import Policy, PolicyRule, PolicyEngine
+
+    gateway = _get_gateway()
+    store = _get_store()
+
+    rules = []
+    for r in req.rules:
+        if not r.get("id") or not r.get("type"):
+            raise HTTPException(400, f"Each rule must have 'id' and 'type' fields")
+        rules.append(PolicyRule(id=r["id"], type=r["type"], config=r.get("config", {})))
+
+    policy = Policy(rules=rules, version=req.version)
+    gateway.policy = policy
+    gateway._policy_engine = PolicyEngine(policy)
+
+    try:
+        await store.save_policy(gateway.tenant, {
+            "version": req.version,
+            "rules": req.rules,
+        })
+    except Exception as e:
+        logger.warning(f"Policy persistence warning: {e}")
+
+    logger.info(f"Policy updated: {len(rules)} rules, hash={policy.policy_hash()[:24]}")
+    return {
+        "status": "updated",
+        "policy_hash": policy.policy_hash(),
+        "rule_count": len(rules),
     }
 
 

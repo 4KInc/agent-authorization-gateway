@@ -47,7 +47,12 @@ class GatewayService:
         self.tenant = tenant
         self.policy = policy or create_demo_policy()
         self._policy_engine = PolicyEngine(self.policy)
-        self._token_secret = token_secret or secrets.token_hex(32)
+        # Use shared secret from env so tokens are verifiable across instances
+        self._token_secret = (
+            token_secret
+            or os.environ.get("GATEWAY_TOKEN_SECRET")
+            or secrets.token_hex(32)
+        )
 
         # Generate signing keypair
         self._private_key = Ed25519PrivateKey.generate()
