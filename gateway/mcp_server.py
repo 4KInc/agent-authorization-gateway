@@ -16,6 +16,7 @@ import json
 import os
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .gateway_service import GatewayService
 from .store import create_store
@@ -46,6 +47,9 @@ mcp = FastMCP(
         "This MCP server provides cryptographic policy enforcement for AI agent actions. "
         "Use authorize_action before performing any privileged operation. "
         "Every decision (approve or deny) produces a signed, hash-chained receipt."
+    ),
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
     ),
 )
 

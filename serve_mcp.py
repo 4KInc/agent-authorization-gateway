@@ -1,27 +1,28 @@
 """Run the Gateway MCP server standalone.
 
 Usage:
-    python serve_mcp.py              # Runs on port 8090
-    python serve_mcp.py --port 9090  # Custom port
+    python serve_mcp.py              # Runs on port 8090 (or PORT env var)
 
 The MCP server exposes gateway tools (authorize_action, verify_receipt, etc.)
 so any MCP-compatible agent can connect and use them.
 """
 
 import os
-import sys
 
-# Must set env vars BEFORE importing FastMCP (it reads them at class init)
-port = os.environ.get("PORT", "8090")
-os.environ["FASTMCP_PORT"] = port
-os.environ["FASTMCP_HOST"] = "0.0.0.0"
+import uvicorn
 
 from gateway.mcp_server import mcp
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8090"))
+    host = "0.0.0.0"
+
+    # Get the Starlette ASGI app from FastMCP
+    app = mcp.streamable_http_app()
+
     print(f"Agent Authorization Gateway — MCP Server")
-    print(f"Listening on 0.0.0.0:{port}")
-    print(f"MCP endpoint: http://0.0.0.0:{port}/mcp")
+    print(f"Listening on {host}:{port}")
+    print(f"MCP endpoint: http://{host}:{port}/mcp")
     print()
 
-    mcp.run(transport="streamable-http")
+    uvicorn.run(app, host=host, port=port)
