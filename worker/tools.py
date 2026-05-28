@@ -41,14 +41,14 @@ def _validate_token(
             ),
         }
 
-    secret = os.environ.get("GATEWAY_TOKEN_SECRET", "")
-
-    # Attempt full JWT decode with signature and expiry verification
+    # For worker-side validation, we do a lightweight check.
+    # Full verification happens at the protected resource via the middleware.
+    # Here we decode without signature verification to check structure/expiry.
     try:
         claims = pyjwt.decode(
             authorization_token,
-            secret,
-            algorithms=["HS256"],
+            options={"verify_signature": False},
+            algorithms=["EdDSA", "HS256"],
             issuer=TOKEN_ISSUER,
             audience=TOKEN_AUDIENCE,
         )

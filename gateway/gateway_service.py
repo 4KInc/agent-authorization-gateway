@@ -5,6 +5,7 @@ This is the main entry point that the ADK agent tool calls.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import secrets
@@ -36,25 +37,21 @@ class GatewayService:
     Evaluates agent action intents against a security policy,
     signs cryptographic receipts for every decision, and issues
     scoped authorization tokens for approved actions.
+
+    Tokens are signed with Ed25519 (EdDSA) — resources verify using
+    only the public key. No shared secrets.
     """
 
     def __init__(
         self,
         tenant: str = "default",
         policy: Policy | None = None,
-        token_secret: str | None = None,
     ):
         self.tenant = tenant
         self.policy = policy or create_demo_policy()
         self._policy_engine = PolicyEngine(self.policy)
-        # Use shared secret from env so tokens are verifiable across instances
-        self._token_secret = (
-            token_secret
-            or os.environ.get("GATEWAY_TOKEN_SECRET")
-            or secrets.token_hex(32)
-        )
 
-        # Generate signing keypair
+        # Generate signing keypair (used for both receipts and tokens)
         self._private_key = Ed25519PrivateKey.generate()
         self._kid = f"gateway-{tenant}-{secrets.token_hex(4)}"
 
@@ -77,9 +74,10 @@ class GatewayService:
         This is the primary entry point. For every call:
         1. Computes action digest (SHA-256 of canonicalized intent)
         2. Evaluates intent against policy rules
-        3. Signs a cryptographic receipt (approve or deny)
-        4. If approved, issues a 60-second scoped token
-        5. Returns the decision, receipt, and token
+        3. If approved, generates a token jti
+        4. Signs a cryptographic receipt (includes token jti for approve, null for deny)
+        5. Issues a 60-second Ed25519-signed token (approvals only)
+        6. Returns the decision, receipt, and token
         """
         # Step 1: Compute action digest
         action_digest = compute_action_digest(agent_id, action, resource, parameters)
@@ -87,20 +85,37 @@ class GatewayService:
         # Step 2: Evaluate policy
         result = self._policy_engine.evaluate(agent_id, action, resource, parameters)
 
-        # Step 3: Sign receipt
+        # Step 3: Issue token first to get jti (only for approvals)
+        token = None
+        token_jti = None
+        if result.decision == "approve":
+            token, token_jti = issue_token(
+                private_key=self._private_key,
+                agent_id=agent_id,
+                action=action,
+                resource=resource,
+                action_digest=action_digest,
+                decision=result.decision,
+                receipt_hash="pending",  # will be updated
+                tenant=self.tenant,
+            )
+
+        # Step 4: Sign receipt (includes token_jti binding)
         receipt = self._receipt_chain.sign_decision(
             request_digest=action_digest,
             policy_version=self.policy.policy_hash(),
             decision=result.decision,
             reasons=result.reason_codes,
+            token_jti=token_jti,
         )
 
-        # Step 4: Issue token (only for approvals)
-        token = None
+        # Step 5: Re-issue token with actual receipt_hash (now known)
         if result.decision == "approve":
-            token = issue_token(
-                secret=self._token_secret,
+            token, token_jti = issue_token(
+                private_key=self._private_key,
                 agent_id=agent_id,
+                action=action,
+                resource=resource,
                 action_digest=action_digest,
                 decision=result.decision,
                 receipt_hash=receipt.receipt_hash,
@@ -143,7 +158,6 @@ class GatewayService:
 
     def get_public_key_jwk(self) -> dict:
         """Return the signing public key as a JWK."""
-        import base64
         pub_bytes = self._private_key.public_key().public_bytes_raw()
         x_b64url = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode("ascii")
         return {

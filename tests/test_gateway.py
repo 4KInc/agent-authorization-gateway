@@ -31,7 +31,7 @@ from gateway.verify import verify_chain, verify_receipt
 @pytest.fixture
 def gateway() -> GatewayService:
     """A GatewayService with the default demo policy."""
-    return GatewayService(tenant="test-tenant", token_secret="test-secret-key")
+    return GatewayService(tenant="test-tenant")
 
 
 @pytest.fixture
@@ -278,18 +278,20 @@ class TestChainVerification:
 # ===========================================================================
 
 class TestTokenIssuance:
-    """Tests for JWT token generation and claims."""
+    """Tests for JWT token generation and claims (Ed25519/EdDSA)."""
 
     def test_token_has_correct_claims(self):
-        """Issued token must contain agent_id, action_digest, and exp claims."""
-        secret = "my-secret"
+        """Issued token must contain agent_id, action, resource, action_digest, and exp."""
+        private_key = Ed25519PrivateKey.generate()
         agent_id = "agent-42"
         action_digest = "sha256:deadbeef"
         receipt_hash = "sha256:cafebabe"
 
-        token = issue_token(
-            secret=secret,
+        token, jti = issue_token(
+            private_key=private_key,
             agent_id=agent_id,
+            action="read",
+            resource="staging-db",
             action_digest=action_digest,
             decision="approve",
             receipt_hash=receipt_hash,
@@ -297,29 +299,34 @@ class TestTokenIssuance:
         )
 
         decoded = jwt.decode(
-            token, secret, algorithms=["HS256"],
+            token, private_key.public_key(), algorithms=["EdDSA"],
             audience="protected-resource",
         )
         assert decoded["sub"] == agent_id
+        assert decoded["action"] == "read"
+        assert decoded["resource"] == "staging-db"
         assert decoded["action_digest"] == action_digest
         assert "exp" in decoded
         assert decoded["decision"] == "approve"
         assert decoded["receipt_hash"] == receipt_hash
         assert decoded["tid"] == "test"
         assert decoded["iss"] == "agent-authorization-gateway"
+        assert decoded["jti"] == jti
 
     def test_token_expires_after_60_seconds(self):
         """Token exp claim must be ~60 seconds after iat."""
-        secret = "my-secret"
-        token = issue_token(
-            secret=secret,
+        private_key = Ed25519PrivateKey.generate()
+        token, jti = issue_token(
+            private_key=private_key,
             agent_id="agent-1",
+            action="read",
+            resource="db",
             action_digest="sha256:abc",
             decision="approve",
             receipt_hash="sha256:def",
         )
         decoded = jwt.decode(
-            token, secret, algorithms=["HS256"],
+            token, private_key.public_key(), algorithms=["EdDSA"],
             audience="protected-resource",
         )
         ttl = decoded["exp"] - decoded["iat"]

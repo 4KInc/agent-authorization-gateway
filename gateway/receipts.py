@@ -36,6 +36,7 @@ class Receipt:
     decision: str
     reasons: list[str]
     prev_receipt: str
+    token_jti: str | None = None  # JTI of the issued token (null for DENY)
 
     # Computed after signing
     receipt_hash: str = ""
@@ -43,7 +44,7 @@ class Receipt:
     kid: str = ""
 
     def body_dict(self) -> dict:
-        return {
+        body = {
             "v": self.v,
             "tenant": self.tenant,
             "seq": self.seq,
@@ -54,6 +55,10 @@ class Receipt:
             "reasons": self.reasons,
             "prev_receipt": self.prev_receipt,
         }
+        # Include token_jti to bind receipt to token (null for denials)
+        if self.token_jti is not None:
+            body["token_jti"] = self.token_jti
+        return body
 
     def envelope_dict(self) -> dict:
         return {
@@ -95,6 +100,7 @@ class ReceiptChain:
         policy_version: str,
         decision: str,
         reasons: list[str],
+        token_jti: str | None = None,
     ) -> Receipt:
         """Create and sign a new receipt, advancing the chain."""
         self._seq += 1
@@ -111,6 +117,7 @@ class ReceiptChain:
             decision=decision,
             reasons=reasons,
             prev_receipt=self._prev_receipt_hash,
+            token_jti=token_jti,
         )
 
         # Canonicalize and hash
