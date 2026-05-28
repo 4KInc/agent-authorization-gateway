@@ -556,9 +556,9 @@ async def get_anchors():
 
 @api_app.post("/tamper-test")
 async def tamper_test(receipt_index: int = 0, field: str = "decision"):
-    """DEV ONLY: Tamper with a stored receipt to demonstrate detection.
+    """DEV ONLY: Tamper with a receipt in the in-memory chain to demonstrate detection.
 
-    Flips a byte in the specified field of the receipt at the given index.
+    Modifies the specified field of the receipt at the given index.
     Only available when GATEWAY_DEV_MODE=true.
     """
     import os
@@ -566,48 +566,34 @@ async def tamper_test(receipt_index: int = 0, field: str = "decision"):
         raise HTTPException(403, "Tamper test only available in dev mode (GATEWAY_DEV_MODE=true)")
 
     gateway = _get_gateway()
-    store = _get_store()
-    chain = await store.get_chain(gateway.tenant)
+    receipts = gateway._receipt_chain._receipts
 
-    if not chain or receipt_index >= len(chain):
-        raise HTTPException(400, f"Invalid receipt index {receipt_index}, chain has {len(chain)} receipts")
+    if not receipts or receipt_index >= len(receipts):
+        raise HTTPException(400, f"Invalid receipt index {receipt_index}, chain has {len(receipts)} receipts")
 
-    receipt = chain[receipt_index]
-    body = receipt.get("body", {})
-    original_value = body.get(field)
+    receipt = receipts[receipt_index]
+    original_value = getattr(receipt, field, None)
     if original_value is None:
-        raise HTTPException(400, f"Field '{field}' not found in receipt body")
+        raise HTTPException(400, f"Field '{field}' not found in receipt")
 
-    # Tamper: modify the field
+    # Tamper: modify the field directly on the Receipt object
     if isinstance(original_value, str):
-        body[field] = original_value + "-TAMPERED"
+        setattr(receipt, field, original_value + "-TAMPERED")
     elif isinstance(original_value, list):
-        body[field] = original_value + ["TAMPERED"]
+        setattr(receipt, field, original_value + ["TAMPERED"])
     else:
-        body[field] = "TAMPERED"
+        setattr(receipt, field, "TAMPERED")
 
-    # Save tampered receipt back
-    receipt["body"] = body
-    receipt_hash = receipt.get("receipt_hash", "")
-    doc_id = receipt_hash.removeprefix("sha256:")[:24]
-
-    # Direct Firestore write to tamper
-    try:
-        from google.cloud import firestore
-        db = firestore.AsyncClient(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
-        doc_ref = db.collection("tenants").document(gateway.tenant).collection("receipts").document(doc_id)
-        await doc_ref.set(receipt)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to write tampered receipt: {e}")
+    new_value = getattr(receipt, field)
 
     return {
         "tampered": True,
         "receipt_index": receipt_index,
         "field": field,
         "original_value": original_value,
-        "new_value": body[field],
-        "receipt_hash": receipt_hash,
-        "message": "Receipt tampered. Run /verify-chain to detect the modification.",
+        "new_value": new_value,
+        "receipt_hash": receipt.receipt_hash,
+        "message": "Receipt tampered in memory. Run /verify-chain to detect the modification.",
     }
 
 

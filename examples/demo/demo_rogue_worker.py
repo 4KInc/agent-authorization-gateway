@@ -110,11 +110,11 @@ def run():
             "agent_id": "rogue-crossaction",
             "public_key": jwk,
         })
-        proof = create_agent_proof(agent_key, "rogue-crossaction", "read_customer", "customers")
+        proof = create_agent_proof(agent_key, "rogue-crossaction", "read", "staging-database")
         auth_resp = client.post(f"{GATEWAY_URL}/authorize", json={
             "agent_id": "rogue-crossaction",
-            "action": "read_customer",
-            "resource": "customers",
+            "action": "read",
+            "resource": "staging-database",
             "agent_proof": proof,
         })
         real_token = auth_resp.json().get("token", "")

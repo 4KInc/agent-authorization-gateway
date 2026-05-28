@@ -51,12 +51,12 @@ def run():
         print(f"    Registered: kid={reg.get('kid', '?')}")
 
         # Step 2: Authorize read_customer (should APPROVE)
-        print(f"\n[2] Authorizing: read_customer on customers (staging)...")
-        proof = create_agent_proof(agent_key, AGENT_ID, "read_customer", "customers")
+        print(f"\n[2] Authorizing: read on staging-database...")
+        proof = create_agent_proof(agent_key, AGENT_ID, "read", "staging-database")
         resp = client.post(f"{GATEWAY_URL}/authorize", json={
             "agent_id": AGENT_ID,
-            "action": "read_customer",
-            "resource": "customers",
+            "action": "read",
+            "resource": "staging-database",
             "agent_proof": proof,
         })
         auth = resp.json()
