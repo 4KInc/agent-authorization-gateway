@@ -17,6 +17,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -164,6 +165,13 @@ api_app = FastAPI(
     description="Cryptographic policy enforcement for AI agent actions",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+api_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
