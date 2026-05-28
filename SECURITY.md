@@ -63,3 +63,21 @@ If any of these assumptions are violated, the tamper-evidence guarantee degrades
 | Merkle tree | SHA-256, RFC 6962 domain separation | Prevents second-preimage attacks on the tree structure |
 | Canonicalization | RFC 8785 (JCS subset) | Deterministic JSON serialization for reproducible hashes across languages |
 | Token format | JWT with EdDSA signature | Industry-standard token format, verifiable by any JWT library supporting EdDSA |
+
+## LLM Blast Radius Containment
+
+The ADK chat agent is intentionally restricted to **read-only tools**:
+
+| Surface | Tools | Can issue tokens? |
+|---------|-------|-------------------|
+| ADK Chat (LLM) | get_chain_stats, get_receipt_chain, verify_receipt, get_public_key, Google Search | **No** |
+| MCP Server | authorize_action, get_chain_stats, get_receipt_chain, verify_receipt, get_public_key | **Yes** (authorize_action only) |
+| REST API | All endpoints including /authorize | **Yes** (POST /authorize only) |
+
+This separation ensures that even a fully compromised chat session (via prompt injection) cannot:
+- Issue authorization tokens
+- Authorize actions on behalf of agents
+- Modify security policies
+- Register new agent identities
+
+The chat agent can only inspect and verify — it is an auditor, not an authorizer. A startup assertion in `gateway/agent.py` fails loudly if a privileged tool is accidentally added to the LLM surface.
