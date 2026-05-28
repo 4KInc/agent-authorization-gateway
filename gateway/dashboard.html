@@ -1129,13 +1129,76 @@ button.secondary:focus-visible { outline: 2px solid var(--teal); outline-offset:
     <!-- ========== POLICY ========== -->
     <section id="v-policy" class="view">
       <h2 class="view-title">Security Policy</h2>
-      <p class="view-desc">The current policy rules governing agent authorization decisions. Changes take effect immediately.</p>
+      <p class="view-desc">The current policy rules governing agent authorization decisions. Edit rules or upload a new policy. Changes take effect immediately and persist to Firestore.</p>
 
-      <div class="form-actions" style="margin-bottom: var(--space-6);">
+      <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-6);flex-wrap:wrap;">
         <button class="primary" id="policyBtn" onclick="loadPolicy()">Load Policy</button>
+        <button class="secondary" onclick="showPolicyEditor()">Edit Policy</button>
+        <button class="secondary" onclick="document.getElementById('policyUpload').click()">Upload JSON</button>
+        <input type="file" id="policyUpload" accept=".json" style="display:none;" onchange="uploadPolicy(this)">
       </div>
 
       <div id="policyContent"></div>
+
+      <!-- Policy editor (hidden by default) -->
+      <div id="policyEditor" style="display:none;">
+        <div class="form-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);">
+            <h3 style="font-size:16px;font-weight:700;">Policy Editor</h3>
+            <button class="secondary" onclick="addRule()" style="font-size:12px;">+ Add Rule</button>
+          </div>
+
+          <div id="rulesList"></div>
+
+          <div class="form-actions" style="margin-top:var(--space-5);">
+            <button class="primary" id="savePolicyBtn" onclick="savePolicy()">Save Policy</button>
+            <button class="secondary" onclick="hidePolicyEditor()">Cancel</button>
+          </div>
+        </div>
+
+        <div class="response" id="policySaveResponse"></div>
+      </div>
+
+      <!-- Policy format reference -->
+      <details style="margin-top:var(--space-6);font-size:13px;color:var(--text-secondary);">
+        <summary style="cursor:pointer;font-weight:600;color:var(--text);margin-bottom:var(--space-3);">Policy JSON format reference</summary>
+        <pre style="background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);font-family:var(--mono);font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre-wrap;color:var(--text);">{
+  "version": "1",
+  "rules": [
+    {
+      "id": "allowed_actions",
+      "type": "allowlist",
+      "config": {
+        "allowed_actions": ["read", "query", "list", "search"]
+      }
+    },
+    {
+      "id": "resource_scope",
+      "type": "resource_scope",
+      "config": {
+        "allowed_resources": ["staging", "dev", "sandbox"],
+        "denied_resources": ["production", "admin"]
+      }
+    },
+    {
+      "id": "rate_limit",
+      "type": "rate_limit",
+      "config": {
+        "max_actions": 10,
+        "window_seconds": 60
+      }
+    }
+  ]
+}</pre>
+        <div style="margin-top:var(--space-3);">
+          <strong>Rule types:</strong>
+          <ul style="padding-left:var(--space-5);line-height:2;">
+            <li><code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 4px;border-radius:3px;">allowlist</code> — only allow listed actions (partial match)</li>
+            <li><code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 4px;border-radius:3px;">resource_scope</code> — allow/deny resources by substring match</li>
+            <li><code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 4px;border-radius:3px;">rate_limit</code> — max actions per time window per agent</li>
+          </ul>
+        </div>
+      </details>
     </section>
 
     <!-- ========== KEYS ========== -->
@@ -1625,13 +1688,17 @@ async function doDryRun() {
 }
 
 /* --- Policy --- */
+let currentPolicyData = null;
+
 async function loadPolicy() {
   btnLoading('policyBtn', true);
   const el = document.getElementById('policyContent');
   el.innerHTML = '<div class="skeleton-block" style="min-height:120px;"></div>';
+  document.getElementById('policyEditor').style.display = 'none';
   try {
     const { ok, data } = await api('GET', '/policy');
     if (!ok) { showGenericResult('policyContent', data, false); btnLoading('policyBtn', false); return; }
+    currentPolicyData = data;
 
     let html = '<div style="margin-bottom:var(--space-4);font-size:13px;color:var(--text-secondary);">' +
       'Policy hash: <code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 6px;border-radius:3px;">' +
@@ -1652,6 +1719,103 @@ async function loadPolicy() {
     el.innerHTML = html;
   } catch(e) { el.innerHTML = '<div style="color:var(--red);">Failed to load policy</div>'; }
   btnLoading('policyBtn', false);
+}
+
+function showPolicyEditor() {
+  document.getElementById('policyContent').style.display = 'none';
+  document.getElementById('policyEditor').style.display = 'block';
+  const rules = currentPolicyData ? currentPolicyData.rules : [];
+  editorRules = JSON.parse(JSON.stringify(rules));
+  renderEditorRules();
+}
+
+function hidePolicyEditor() {
+  document.getElementById('policyEditor').style.display = 'none';
+  document.getElementById('policyContent').style.display = 'block';
+}
+
+let editorRules = [];
+
+function renderEditorRules() {
+  const el = document.getElementById('rulesList');
+  if (editorRules.length === 0) {
+    el.innerHTML = '<p style="color:var(--text-tertiary);font-size:13px;padding:var(--space-4) 0;">No rules. Click "+ Add Rule" to create one.</p>';
+    return;
+  }
+  el.innerHTML = editorRules.map((rule, i) => {
+    const typeOptions = ['allowlist', 'resource_scope', 'rate_limit'].map(t =>
+      '<option value="' + t + '"' + (rule.type === t ? ' selected' : '') + '>' + t + '</option>'
+    ).join('');
+    return '<div style="background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);margin-bottom:var(--space-3);position:relative;">' +
+      '<button onclick="removeRule(' + i + ')" style="position:absolute;top:var(--space-3);right:var(--space-3);background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;" title="Remove rule">&times;</button>' +
+      '<div class="field-row" style="margin-bottom:var(--space-3);">' +
+        '<div class="field"><label>Rule ID</label><input value="' + esc(rule.id || '') + '" onchange="editorRules[' + i + '].id=this.value" style="font-family:var(--mono);font-size:13px;" /></div>' +
+        '<div class="field"><label>Type</label><select onchange="editorRules[' + i + '].type=this.value;renderEditorRules()" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-3) var(--space-4);font-size:13px;background:var(--bg);color:var(--text);">' + typeOptions + '</select></div>' +
+      '</div>' +
+      '<div class="field"><label>Config (JSON)</label>' +
+        '<textarea rows="4" onchange="try{editorRules[' + i + '].config=JSON.parse(this.value)}catch(e){}" style="font-family:var(--mono);font-size:12px;width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-3);background:var(--bg);color:var(--text);resize:vertical;">' +
+        esc(JSON.stringify(rule.config || {}, null, 2)) + '</textarea></div>' +
+    '</div>';
+  }).join('');
+}
+
+function addRule() {
+  editorRules.push({ id: 'new_rule_' + (editorRules.length + 1), type: 'allowlist', config: { allowed_actions: [] } });
+  renderEditorRules();
+}
+
+function removeRule(i) {
+  editorRules.splice(i, 1);
+  renderEditorRules();
+}
+
+async function savePolicy() {
+  btnLoading('savePolicyBtn', true);
+  try {
+    const { ok, data } = await api('PUT', '/policy', { version: '1', rules: editorRules });
+    if (ok) {
+      document.getElementById('policySaveResponse').innerHTML =
+        '<div class="verify-banner valid" style="margin-top:var(--space-4);">' +
+        '<span class="vb-icon">&#10003;</span><div><div class="vb-text">Policy saved</div>' +
+        '<div class="vb-sub">Hash: ' + esc(data.policy_hash || '') + ' &middot; ' + data.rule_count + ' rules</div></div></div>';
+      hidePolicyEditor();
+      loadPolicy();
+    } else {
+      showGenericResult('policySaveResponse', data, false);
+    }
+  } catch(e) { showGenericResult('policySaveResponse', { error: e.message }, false); }
+  btnLoading('savePolicyBtn', false);
+}
+
+function uploadPolicy(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      const policy = JSON.parse(e.target.result);
+      if (!policy.rules || !Array.isArray(policy.rules)) {
+        alert('Invalid policy JSON: must have a "rules" array');
+        return;
+      }
+      const { ok, data } = await api('PUT', '/policy', {
+        version: policy.version || '1',
+        rules: policy.rules,
+      });
+      if (ok) {
+        loadPolicy();
+        document.getElementById('policyContent').style.display = 'block';
+        document.getElementById('policyEditor').style.display = 'none';
+        alert('Policy uploaded: ' + data.rule_count + ' rules, hash=' + (data.policy_hash || '').slice(0, 24) + '...');
+      } else {
+        alert('Upload failed: ' + JSON.stringify(data));
+      }
+    } catch(err) {
+      alert('Invalid JSON file: ' + err.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
 }
 
 /* Init */

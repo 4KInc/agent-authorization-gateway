@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "rules": [
+    {
+      "id": "readonly_actions",
+      "type": "allowlist",
+      "config": {
+        "allowed_actions": ["read", "list", "get", "search"]
+      }
+    },
+    {
+      "id": "all_resources",
+      "type": "resource_scope",
+      "config": {
+        "denied_resources": ["secrets", "master-key"]
+      }
+    }
+  ]
+}

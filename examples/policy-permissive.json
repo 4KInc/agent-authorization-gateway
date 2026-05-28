@@ -1,0 +1,27 @@
+{
+  "version": "1",
+  "rules": [
+    {
+      "id": "allowed_actions",
+      "type": "allowlist",
+      "config": {
+        "allowed_actions": ["read", "write", "query", "list", "get", "search", "analyze", "create", "update", "delete", "deploy"]
+      }
+    },
+    {
+      "id": "resource_scope",
+      "type": "resource_scope",
+      "config": {
+        "denied_resources": ["master-key", "secrets", "root"]
+      }
+    },
+    {
+      "id": "rate_limit",
+      "type": "rate_limit",
+      "config": {
+        "max_actions": 100,
+        "window_seconds": 60
+      }
+    }
+  ]
+}
