@@ -889,10 +889,18 @@ button.secondary:focus-visible { outline: 2px solid var(--teal); outline-offset:
         <span class="nav-method post">POST</span>
         <span class="nav-label">Verify Chain<span class="nav-hint">Full chain integrity check</span></span>
       </button>
+      <button data-view="dry-run">
+        <span class="nav-method post">POST</span>
+        <span class="nav-label">Dry Run<span class="nav-hint">Simulate without receipts</span></span>
+      </button>
       <div class="nav-sep">Inspect</div>
       <button data-view="chain">
         <span class="nav-method get">GET</span>
         <span class="nav-label">Audit Log<span class="nav-hint">Browse all decisions</span></span>
+      </button>
+      <button data-view="policy">
+        <span class="nav-method get">GET</span>
+        <span class="nav-label">Policy<span class="nav-hint">View security rules</span></span>
       </button>
       <button data-view="keys">
         <span class="nav-method get">GET</span>
@@ -1070,6 +1078,64 @@ button.secondary:focus-visible { outline: 2px solid var(--teal); outline-offset:
       <div class="audit-log" id="chainTimeline">
         <div class="audit-empty">Loading...</div>
       </div>
+    </section>
+
+    <!-- ========== DRY RUN ========== -->
+    <section id="v-dry-run" class="view">
+      <h2 class="view-title">Dry Run</h2>
+      <p class="view-desc">Simulate a policy evaluation without creating a receipt or advancing the chain. Useful for testing policy changes.</p>
+
+      <div class="scenarios" role="group" aria-label="Quick-fill dry-run scenarios">
+        <button class="scenario-btn sc-approve" onclick="fillDryRun('agent-1','read','staging-database','{}')">
+          <span class="sc-icon" aria-hidden="true">&#9673;</span>Read Staging
+        </button>
+        <button class="scenario-btn sc-deny" onclick="fillDryRun('agent-1','write','staging-database','{&quot;table&quot;:&quot;users&quot;}')">
+          <span class="sc-icon" aria-hidden="true">&#10005;</span>Write (blocked)
+        </button>
+        <button class="scenario-btn sc-deny" onclick="fillDryRun('agent-1','read','production-db','{}')">
+          <span class="sc-icon" aria-hidden="true">&#10005;</span>Read Prod (blocked)
+        </button>
+      </div>
+
+      <div class="form-card">
+        <div class="field-row">
+          <div class="field">
+            <label for="drAgent">Agent ID</label>
+            <input id="drAgent" type="text" value="agent-1" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="drAction">Action</label>
+            <input id="drAction" type="text" value="read" autocomplete="off" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="drResource">Resource</label>
+            <input id="drResource" type="text" value="staging-database" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="drParams">Parameters</label>
+            <input id="drParams" type="text" value="{}" autocomplete="off" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="primary" id="drBtn" onclick="doDryRun()">Simulate</button>
+        </div>
+      </div>
+
+      <div class="response" id="dryRunResponse"></div>
+    </section>
+
+    <!-- ========== POLICY ========== -->
+    <section id="v-policy" class="view">
+      <h2 class="view-title">Security Policy</h2>
+      <p class="view-desc">The current policy rules governing agent authorization decisions. Changes take effect immediately.</p>
+
+      <div class="form-actions" style="margin-bottom: var(--space-6);">
+        <button class="primary" id="policyBtn" onclick="loadPolicy()">Load Policy</button>
+      </div>
+
+      <div id="policyContent"></div>
     </section>
 
     <!-- ========== KEYS ========== -->
@@ -1511,6 +1577,81 @@ async function loadHealth() {
     el.textContent = 'Unreachable';
     el.className = 'status-val warn';
   }
+}
+
+/* --- Dry Run --- */
+function fillDryRun(agent, action, resource, params) {
+  document.getElementById('drAgent').value = agent;
+  document.getElementById('drAction').value = action;
+  document.getElementById('drResource').value = resource;
+  document.getElementById('drParams').value = params;
+}
+
+async function doDryRun() {
+  btnLoading('drBtn', true);
+  showSkeleton('dryRunResponse');
+  try {
+    let params = {};
+    try { params = JSON.parse(document.getElementById('drParams').value || '{}'); } catch(e) {}
+    const { ok, data } = await api('POST', '/authorize/dry-run', {
+      agent_id: document.getElementById('drAgent').value,
+      action: document.getElementById('drAction').value,
+      resource: document.getElementById('drResource').value,
+      parameters: params
+    });
+    // Show decision banner (reuse auth result display)
+    const el = document.getElementById('dryRunResponse');
+    if (ok && data.decision) {
+      const isApprove = data.decision === 'approve';
+      const cls = isApprove ? 'approve' : 'deny';
+      const icon = isApprove ? '&#10003;' : '&#10007;';
+      const title = isApprove ? 'Would be Approved' : 'Would be Denied';
+      const reasons = (data.reason_codes || []).map(r =>
+        '<span class="reason-chip">' + esc(humanizeReason(r)) + '</span>'
+      ).join('');
+      el.innerHTML = '<div class="decision-banner ' + cls + '">' +
+        '<div class="decision-icon" aria-hidden="true">' + icon + '</div>' +
+        '<div class="decision-content">' +
+          '<div class="decision-title">' + title + '</div>' +
+          (reasons ? '<div class="decision-reasons">' + reasons + '</div>' : '') +
+          '<div class="decision-meta"><span>Policy: <span class="mono">' + esc((data.policy_version||'').slice(0,20)) + '\u2026</span></span>' +
+          '<span style="background:var(--amber-soft);color:var(--amber);padding:1px 8px;border-radius:100px;font-size:11px;font-weight:600;">DRY RUN</span></div>' +
+        '</div></div>';
+    } else {
+      showGenericResult('dryRunResponse', data, ok);
+    }
+  } catch(e) { showGenericResult('dryRunResponse', { error: e.message }, false); }
+  btnLoading('drBtn', false);
+}
+
+/* --- Policy --- */
+async function loadPolicy() {
+  btnLoading('policyBtn', true);
+  const el = document.getElementById('policyContent');
+  el.innerHTML = '<div class="skeleton-block" style="min-height:120px;"></div>';
+  try {
+    const { ok, data } = await api('GET', '/policy');
+    if (!ok) { showGenericResult('policyContent', data, false); btnLoading('policyBtn', false); return; }
+
+    let html = '<div style="margin-bottom:var(--space-4);font-size:13px;color:var(--text-secondary);">' +
+      'Policy hash: <code style="font-family:var(--mono);font-size:12px;background:var(--surface-alt);padding:1px 6px;border-radius:3px;">' +
+      esc(data.policy_hash || '') + '</code></div>';
+
+    (data.rules || []).forEach(rule => {
+      const typeColors = { allowlist: 'teal', resource_scope: 'amber', rate_limit: 'red' };
+      const color = typeColors[rule.type] || 'slate';
+      html += '<div class="form-card" style="margin-bottom:var(--space-4);">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3);">' +
+          '<span style="font-weight:600;font-size:14px;">' + esc(rule.id) + '</span>' +
+          '<span class="pill" style="background:var(--' + color + '-soft);color:var(--' + color + ');">' + esc(rule.type) + '</span>' +
+        '</div>' +
+        '<pre style="background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-3) var(--space-4);font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--text);">' +
+        esc(JSON.stringify(rule.config, null, 2)) + '</pre></div>';
+    });
+
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '<div style="color:var(--red);">Failed to load policy</div>'; }
+  btnLoading('policyBtn', false);
 }
 
 /* Init */

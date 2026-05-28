@@ -237,3 +237,148 @@ def test_keys_returns_ed25519_jwk():
     assert "x" in jwk
     # x should be a base64url-encoded 32-byte Ed25519 public key
     assert isinstance(jwk["x"], str) and len(jwk["x"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# 11. POST /authorize/dry-run — approve scenario
+# ---------------------------------------------------------------------------
+
+def test_authorize_dry_run_approve():
+    resp = client.post("/authorize/dry-run", json={
+        "agent_id": "agent-1",
+        "action": "read",
+        "resource": "staging-db",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["decision"] == "approve"
+    assert data["dry_run"] is True
+    assert "token" not in data
+
+
+# ---------------------------------------------------------------------------
+# 12. POST /authorize/dry-run — deny scenario
+# ---------------------------------------------------------------------------
+
+def test_authorize_dry_run_deny():
+    resp = client.post("/authorize/dry-run", json={
+        "agent_id": "rogue",
+        "action": "delete",
+        "resource": "production-db",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["decision"] == "deny"
+    assert len(data["reason_codes"]) > 0
+    assert data["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# 13. POST /authorize/dry-run does not create a receipt
+# ---------------------------------------------------------------------------
+
+def test_dry_run_does_not_create_receipt():
+    # Snapshot the current total_receipts
+    before = client.get("/stats").json()["total_receipts"]
+
+    # Issue a dry-run request
+    client.post("/authorize/dry-run", json={
+        "agent_id": "agent-1",
+        "action": "read",
+        "resource": "staging-db",
+    })
+
+    after = client.get("/stats").json()["total_receipts"]
+    assert after == before
+
+
+# ---------------------------------------------------------------------------
+# 14. GET /policy — returns rules, hash, and tenant
+# ---------------------------------------------------------------------------
+
+def test_get_policy():
+    resp = client.get("/policy")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert "tenant" in data
+    assert isinstance(data["rules"], list)
+    assert len(data["rules"]) == 3
+    assert data["policy_hash"].startswith("sha256:")
+
+
+# ---------------------------------------------------------------------------
+# 15. PUT /policy — update and verify effect
+# ---------------------------------------------------------------------------
+
+def test_update_policy():
+    # Save the original policy so we can restore it later
+    original = client.get("/policy").json()
+
+    # Update to a restrictive policy that only allows "read"
+    new_rules = [
+        {
+            "id": "allowed_actions",
+            "type": "allowlist",
+            "config": {"allowed_actions": ["read"]},
+        },
+        {
+            "id": "resource_scope",
+            "type": "resource_scope",
+            "config": {
+                "allowed_resources": ["staging", "dev", "sandbox", "test"],
+                "denied_resources": ["production", "prod"],
+            },
+        },
+        {
+            "id": "rate_limit",
+            "type": "rate_limit",
+            "config": {"max_actions": 100, "window_seconds": 60},
+        },
+    ]
+    update_resp = client.put("/policy", json={"version": "2", "rules": new_rules})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["status"] == "updated"
+
+    # "query" was previously allowed but should now be denied
+    auth_resp = client.post("/authorize", json={
+        "agent_id": "test-agent",
+        "action": "query",
+        "resource": "staging-db",
+    })
+    assert auth_resp.json()["decision"] == "deny"
+
+    # Restore original policy
+    restore_resp = client.put("/policy", json={
+        "version": original["version"],
+        "rules": original["rules"],
+    })
+    assert restore_resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 16. POST /authorize — validation: whitespace-only agent_id → 422
+# ---------------------------------------------------------------------------
+
+def test_authorize_validation_empty_agent_id():
+    resp = client.post("/authorize", json={
+        "agent_id": "   ",
+        "action": "read",
+        "resource": "staging-db",
+    })
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 17. POST /authorize — validation: empty action → 422
+# ---------------------------------------------------------------------------
+
+def test_authorize_validation_empty_action():
+    resp = client.post("/authorize", json={
+        "agent_id": "test-agent",
+        "action": "",
+        "resource": "staging-db",
+    })
+    assert resp.status_code == 422
