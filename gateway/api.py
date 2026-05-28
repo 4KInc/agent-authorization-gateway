@@ -18,12 +18,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
 from .gateway_service import GatewayService
-from .identity import AgentRegistry, verify_agent_proof
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
 
@@ -37,7 +36,6 @@ logging.basicConfig(
 _gateway: GatewayService | None = None
 _store: ReceiptStore | None = None
 _anchor: AnchorSink | None = None
-_registry = AgentRegistry()
 
 
 def _get_gateway() -> GatewayService:
@@ -68,7 +66,7 @@ class AuthorizeRequest(BaseModel):
     action: str = Field(..., min_length=1, max_length=256, description="Action to authorize")
     resource: str = Field(..., min_length=1, max_length=512, description="Target resource")
     parameters: dict | None = None
-    agent_proof: str | None = Field(None, description="DPoP-style agent identity proof JWT (optional)")
+    agent_proof: str = Field(..., description="DPoP-style agent identity proof JWT (REQUIRED)")
 
     @field_validator("agent_id", "action", "resource")
     @classmethod
@@ -205,10 +203,11 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-@api_app.get("/", response_class=HTMLResponse)
+@api_app.get("/", include_in_schema=False)
 async def root():
-    """Interactive dashboard UI."""
-    return _DASHBOARD_HTML
+    """API landing — redirects to Swagger docs."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/docs", status_code=307)
 
 
 @api_app.get("/health")
@@ -225,33 +224,24 @@ async def health():
 async def authorize(req: AuthorizeRequest):
     """Authorize an agent action. Returns decision + receipt + token.
 
-    If agent_proof is provided, the Gateway verifies the agent's identity
-    before evaluating the policy. This binds the decision to a verified agent.
+    SECURITY: agent_proof is REQUIRED. The Gateway verifies the agent's
+    DPoP identity proof in the service layer before evaluating policy.
+    Calls without proof are rejected with 401 NO_PROOF.
     """
     gateway = _get_gateway()
     store = _get_store()
 
-    # Verify agent identity proof if provided
-    verified_agent = None
-    if req.agent_proof:
-        try:
-            verified_agent = verify_agent_proof(
-                proof=req.agent_proof,
-                registry=_registry,
-                expected_agent_id=req.agent_id,
-                expected_action=req.action,
-                expected_resource=req.resource,
-            )
-            logger.info(f"Agent identity verified: {verified_agent.agent_id} kid={verified_agent.kid}")
-        except ValueError as e:
-            raise HTTPException(401, str(e))
-
-    response = gateway.authorize(
-        agent_id=req.agent_id,
-        action=req.action,
-        resource=req.resource,
-        parameters=req.parameters,
-    )
+    # DPoP verification happens inside gateway.authorize() — single chokepoint
+    try:
+        response = gateway.authorize(
+            agent_id=req.agent_id,
+            action=req.action,
+            resource=req.resource,
+            parameters=req.parameters,
+            agent_proof=req.agent_proof,
+        )
+    except ValueError as e:
+        raise HTTPException(401, str(e))
 
     # Persist receipt with action metadata for display
     # (the receipt body itself only stores the request_digest hash, not the original fields)
@@ -269,7 +259,8 @@ async def authorize(req: AuthorizeRequest):
         await store.save_stats(gateway.tenant, gateway.get_chain_stats())
         await store.save_rate_limits(gateway.tenant, gateway._policy_engine._rate_counters)
     except Exception as e:
-        logger.warning(f"Persistence warning: {e}")
+        logger.exception(f"RECEIPT_PERSIST_FAILED: {e}")
+        raise HTTPException(500, "Receipt could not be persisted. Token withheld to prevent authorization without audit trail.")
 
     # Anchor Merkle root
     try:
@@ -445,10 +436,10 @@ async def get_stats():
 
 @api_app.get("/keys")
 async def get_keys():
-    """Get the gateway's signing public key as a JWK.
+    """Get the gateway's shared signing public key as a JWK.
 
-    Any verifier can use this key to independently verify receipt signatures
-    without trusting the gateway.
+    Returns exactly ONE key — the shared key loaded from Secret Manager.
+    All gateway surfaces (REST, MCP, ADK) use this same key.
     """
     gateway = _get_gateway()
     return {
@@ -529,7 +520,8 @@ async def register_agent(req: AgentRegisterRequest):
     authorization decisions to a specific verified identity.
     """
     try:
-        agent = _registry.register(req.agent_id, req.public_key)
+        gateway = _get_gateway()
+        agent = gateway._registry.register(req.agent_id, req.public_key)
         return {
             "status": "registered",
             "agent_id": agent.agent_id,
@@ -542,7 +534,7 @@ async def register_agent(req: AgentRegisterRequest):
 @api_app.get("/agents")
 async def list_agents():
     """List all registered agents."""
-    return {"agents": _registry.list_agents()}
+    return {"agents": _get_gateway()._registry.list_agents()}
 
 
 @api_app.get("/anchors")
@@ -606,11 +598,3 @@ async def tamper_test(receipt_index: int = 0, field: str = "decision"):
     }
 
 
-# --- Dashboard HTML (served from separate file for maintainability) ---
-
-def _load_dashboard_html() -> str:
-    import pathlib
-    p = pathlib.Path(__file__).parent / "dashboard.html"
-    return p.read_text()
-
-_DASHBOARD_HTML = _load_dashboard_html()

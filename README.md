@@ -118,14 +118,21 @@ cp .env.example .env  # add GOOGLE_API_KEY for ADK agent
 
 ```bash
 python serve.py           # REST API + Dashboard → http://localhost:8080
+
+# MCP server requires transport auth (bearer token or IAM)
+export MCP_AUTH_MODE=bearer
+export MCP_AUTH_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 python serve_mcp.py       # MCP server → http://localhost:8090/mcp
+
 adk web authorization_gateway  # ADK chat → http://localhost:8000
 ```
+
+> **Note:** The MCP server requires authentication. `GET /keys` on the REST API is the only anonymous endpoint. All MCP tools require a valid `Authorization: Bearer <token>` header, and `authorize_action` additionally requires a DPoP agent identity proof. See [SECURITY.md](SECURITY.md).
 
 ### Run tests
 
 ```bash
-pytest tests/ -v   # 101 tests
+pytest tests/ -v   # 107 tests
 ```
 
 ### Run the full demo
@@ -138,11 +145,18 @@ pytest tests/ -v   # 101 tests
 
 ```bash
 gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT/repo/image:latest
+
+# REST API (/keys is anonymous; /authorize requires DPoP proof)
 gcloud run deploy agent-auth-gateway --image ... --allow-unauthenticated \
   --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT"
+
+# MCP server (transport auth required)
+MCP_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+gcloud run deploy agent-auth-gateway-mcp --image ... --allow-unauthenticated \
+  --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT,MCP_AUTH_MODE=bearer,MCP_AUTH_TOKEN=$MCP_TOKEN"
 ```
 
-> **Production note:** Demo deployments use `--allow-unauthenticated` for judge access. Production deployments should gate the Gateway behind IAM or Cloud Run authentication.
+> **Production note:** Use `MCP_AUTH_MODE=iam` with `--no-allow-unauthenticated` for production MCP deployments. The `bearer` mode with `--allow-unauthenticated` is for demo/hackathon use where the worker needs a shared secret. The REST API's `/authorize` endpoint enforces DPoP proof at the application layer regardless of Cloud Run IAM settings.
 
 ## Demo
 
@@ -158,9 +172,13 @@ Run `./examples/demo/run_demo.sh` to see the full demo locally.
 
 | Service | URL |
 |---------|-----|
+| **Interactive Demo UI** | **https://agent-auth-demo-ui-1031148889398.us-central1.run.app** |
 | REST API + Dashboard | https://agent-auth-gateway-1031148889398.us-central1.run.app |
 | MCP Server | https://agent-auth-gateway-mcp-1031148889398.us-central1.run.app/mcp |
 | ADK Chat Agent | https://agent-auth-gateway-adk-1031148889398.us-central1.run.app |
+| Protected Resource | https://agent-auth-gateway-resource-1031148889398.us-central1.run.app |
+
+> **MCP auth:** The MCP server requires `Authorization: Bearer <token>`. A demo bearer token is shared with the submission; production deployments use `MCP_AUTH_MODE=iam` with Cloud Run IAM. See [SECURITY.md](SECURITY.md).
 
 ## Security Model
 
