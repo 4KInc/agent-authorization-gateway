@@ -1,0 +1,3 @@
+# Naming Note
+
+The [agentgateway/agentgateway](https://github.com/agentgateway/agentgateway) project is a proxy-layer gateway that routes and applies runtime policy to agent-to-tool traffic (similar to an API gateway for agents). This project — Agent Authorization Gateway — is architecturally different: it produces **per-action cryptographic receipts** (Ed25519-signed, hash-chained, Merkle-anchored) that any third party can independently verify without trusting the gateway. The core contribution is the Receipt Chain Verification Protocol, an open specification for tamper-evident authorization proof, not a routing proxy. The two projects are complementary — agentgateway could use this project's receipt protocol to add cryptographic auditability to its policy decisions.

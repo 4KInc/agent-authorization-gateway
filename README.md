@@ -69,7 +69,7 @@ The Agent Authorization Gateway sits between AI agents and privileged resources.
 
 ```bash
 # Clone the repo
-git clone https://github.com/heart1in/agent-authorization-gateway.git
+git clone https://github.com/4KInc/agent-authorization-gateway.git
 cd agent-authorization-gateway
 
 # Create virtual environment
