@@ -586,6 +586,15 @@ async def tamper_test(receipt_index: int = 0, field: str = "decision"):
 
     new_value = getattr(receipt, field)
 
+    # Also tamper the store copy so /chain returns the tampered data
+    store = _get_store()
+    try:
+        stored_chain = await store.get_chain(gateway.tenant)
+        if stored_chain and receipt_index < len(stored_chain):
+            stored_chain[receipt_index]["body"][field] = new_value
+    except Exception:
+        pass
+
     return {
         "tampered": True,
         "receipt_index": receipt_index,
@@ -593,7 +602,7 @@ async def tamper_test(receipt_index: int = 0, field: str = "decision"):
         "original_value": original_value,
         "new_value": new_value,
         "receipt_hash": receipt.receipt_hash,
-        "message": "Receipt tampered in memory. Run /verify-chain to detect the modification.",
+        "message": "Receipt tampered. Run /verify-chain to detect the modification.",
     }
 
 
