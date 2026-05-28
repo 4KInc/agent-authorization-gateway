@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
 from .gateway_service import GatewayService
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
@@ -34,6 +35,7 @@ logging.basicConfig(
 # Module-level state
 _gateway: GatewayService | None = None
 _store: ReceiptStore | None = None
+_anchor: AnchorSink | None = None
 
 
 def _get_gateway() -> GatewayService:
@@ -48,6 +50,13 @@ def _get_store() -> ReceiptStore:
     if _store is None:
         _store = create_store()
     return _store
+
+
+def _get_anchor() -> AnchorSink:
+    global _anchor
+    if _anchor is None:
+        _anchor = create_anchor_sink()
+    return _anchor
 
 
 # --- Request/Response models ---
@@ -239,6 +248,20 @@ async def authorize(req: AuthorizeRequest):
         await store.save_rate_limits(gateway.tenant, gateway._policy_engine._rate_counters)
     except Exception as e:
         logger.warning(f"Persistence warning: {e}")
+
+    # Anchor Merkle root
+    try:
+        merkle_root = gateway.get_merkle_root()
+        if merkle_root:
+            anchor = _get_anchor()
+            record = AnchorRecord(
+                merkle_root=merkle_root,
+                receipt_count=len(gateway._receipt_chain.get_receipts()),
+                tenant=gateway.tenant,
+            )
+            await anchor.anchor(record, gateway._private_key)
+    except Exception as e:
+        logger.warning(f"Anchor warning: {e}")
 
     logger.info(f"authorize: agent={req.agent_id} action={req.action} resource={req.resource} decision={response.decision}")
 
@@ -467,6 +490,72 @@ async def update_policy(req: UpdatePolicyRequest):
         "status": "updated",
         "policy_hash": policy.policy_hash(),
         "rule_count": len(rules),
+    }
+
+
+@api_app.get("/anchors")
+async def get_anchors():
+    """Get all Merkle root anchors for the tenant."""
+    gateway = _get_gateway()
+    anchor = _get_anchor()
+    anchors = await anchor.get_anchors(gateway.tenant)
+    return {"tenant": gateway.tenant, "anchors": anchors, "count": len(anchors)}
+
+
+@api_app.post("/tamper-test")
+async def tamper_test(receipt_index: int = 0, field: str = "decision"):
+    """DEV ONLY: Tamper with a stored receipt to demonstrate detection.
+
+    Flips a byte in the specified field of the receipt at the given index.
+    Only available when GATEWAY_DEV_MODE=true.
+    """
+    import os
+    if os.environ.get("GATEWAY_DEV_MODE", "").lower() != "true":
+        raise HTTPException(403, "Tamper test only available in dev mode (GATEWAY_DEV_MODE=true)")
+
+    gateway = _get_gateway()
+    store = _get_store()
+    chain = await store.get_chain(gateway.tenant)
+
+    if not chain or receipt_index >= len(chain):
+        raise HTTPException(400, f"Invalid receipt index {receipt_index}, chain has {len(chain)} receipts")
+
+    receipt = chain[receipt_index]
+    body = receipt.get("body", {})
+    original_value = body.get(field)
+    if original_value is None:
+        raise HTTPException(400, f"Field '{field}' not found in receipt body")
+
+    # Tamper: modify the field
+    if isinstance(original_value, str):
+        body[field] = original_value + "-TAMPERED"
+    elif isinstance(original_value, list):
+        body[field] = original_value + ["TAMPERED"]
+    else:
+        body[field] = "TAMPERED"
+
+    # Save tampered receipt back
+    receipt["body"] = body
+    receipt_hash = receipt.get("receipt_hash", "")
+    doc_id = receipt_hash.removeprefix("sha256:")[:24]
+
+    # Direct Firestore write to tamper
+    try:
+        from google.cloud import firestore
+        db = firestore.AsyncClient(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        doc_ref = db.collection("tenants").document(gateway.tenant).collection("receipts").document(doc_id)
+        await doc_ref.set(receipt)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to write tampered receipt: {e}")
+
+    return {
+        "tampered": True,
+        "receipt_index": receipt_index,
+        "field": field,
+        "original_value": original_value,
+        "new_value": body[field],
+        "receipt_hash": receipt_hash,
+        "message": "Receipt tampered. Run /verify-chain to detect the modification.",
     }
 
 
