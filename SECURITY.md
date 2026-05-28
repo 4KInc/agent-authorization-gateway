@@ -51,7 +51,9 @@ The tamper-evidence guarantee relies on:
 2. **Anchor sink write-once property:** The Merkle root anchor destination (Cloud Storage with versioning, or the local signed log) is not retroactively rewritable without leaving evidence.
 3. **Verifier independence:** The receipt verification code (`gateway/verify.py`) uses only the public key and standard cryptographic operations. It does not trust the Gateway — it verifies against math.
 
-If any of these assumptions are violated, the tamper-evidence guarantee degrades to "detection after the fact" rather than "prevention."
+**Important:** Firestore receipts are mutable by any operator with write access to the database. Tamper-evidence does not derive from Firestore — it derives from the Ed25519 signatures on each receipt and the external anchor sink. If a receipt is modified in Firestore, `verify_receipt` will detect the tampering because the signature will not match the modified body. Firestore is a convenience store for querying and display; the cryptographic chain is the source of truth.
+
+If any of the above assumptions are violated, the tamper-evidence guarantee degrades to "detection after the fact" rather than "prevention."
 
 ## Cryptographic Choices
 

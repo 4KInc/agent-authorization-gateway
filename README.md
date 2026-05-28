@@ -28,15 +28,15 @@ If an agent is compromised or hallucinates a dangerous action, existing framewor
 
 ### vs. Related Projects
 
-| | Agent Authorization Gateway | [agentgateway](https://github.com/agentgateway/agentgateway) | [better-auth agent-auth](https://github.com/nicnocquee/agent-auth-protocol) | MCP Gateway Registry |
-|---|---|---|---|---|
-| Per-action signed receipts | Yes (Ed25519) | No | No | No |
-| Hash-chained audit trail | Yes | No | No | No |
-| Merkle anchoring | Yes (RFC 6962) | No | No | No |
-| Independent verification | Yes (public key only) | No | No | No |
-| Token format | Ed25519 JWT (60s, action-bound) | — | Bearer token | — |
-| Agent identity binding | DPoP-style proof | — | — | — |
-| Open protocol spec | Yes (docs/protocol.md) | No | Draft | No |
+| | Agent Authorization Gateway | [agentgateway](https://github.com/agentgateway/agentgateway) | [better-auth agent-auth](https://github.com/better-auth/agent-auth-protocol) |
+|---|---|---|---|
+| Per-action signed receipts | Yes (Ed25519) | No | No |
+| Hash-chained audit trail | Yes | No | No |
+| Merkle anchoring | Yes (RFC 6962) | No | No |
+| Independent verification | Yes (public key only) | No | No |
+| Token format | Ed25519 JWT (60s, action-bound) | — | Bearer token |
+| Agent identity binding | DPoP-style proof | — | — |
+| Open protocol spec | Yes ([docs/protocol.md](docs/protocol.md)) | No | Draft |
 
 ## Architecture
 
@@ -46,12 +46,12 @@ If an agent is compromised or hallucinates a dangerous action, existing framewor
                           MCP / REST
  ┌─────────────────┐    (+ DPoP proof)     ┌──────────────────────────┐
  │  Worker Agent   │ ───────────────────> │  Authorization Gateway   │
- │  (ADK/LangChain │  1. register identity │  (Gemini + ADK)          │
- │   /CrewAI/any)  │  2. sign DPoP proof   │                          │
- │                 │  3. declare intent    │  ┌ Agent Registry        │
- │  Ed25519 keypair│ <─────────────────── │  │  (DPoP verification)  │
- │  per agent      │  4. Ed25519 token     │  ├ Policy Engine         │
- │                 │     + signed receipt  │  │  (allowlist/scope/    │
+ │  (ADK/LangChain │  1. register identity │                          │
+ │   /CrewAI/any)  │  2. sign DPoP proof   │  ┌ Agent Registry        │
+ │                 │  3. declare intent    │  │  (DPoP verification)  │
+ │  Ed25519 keypair│ <─────────────────── │  ├ Policy Engine         │
+ │  per agent      │  4. Ed25519 token     │  │  (deterministic Python │
+ │                 │     + signed receipt  │  │   allowlist/scope/    │
  └────────┬────────┘     (token_jti bound) │  │   rate limit)         │
           │                                │  ├ Receipt Signer        │
           │  5. use Ed25519 token           │  │  (Ed25519 + hash      │
@@ -78,7 +78,7 @@ If an agent is compromised or hallucinates a dangerous action, existing framewor
  └──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
-**[View full interactive diagram →](docs/architecture.svg)**
+> **Note:** Gemini/ADK provides the conversational operator surface only; policy evaluation, receipt signing, and token issuance are deterministic and run independent of the model.
 
 ## The Receipt Chain Verification Protocol
 
@@ -142,6 +142,8 @@ gcloud run deploy agent-auth-gateway --image ... --allow-unauthenticated \
   --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT"
 ```
 
+> **Production note:** Demo deployments use `--allow-unauthenticated` for judge access. Production deployments should gate the Gateway behind IAM or Cloud Run authentication.
+
 ## Demo
 
 The demo proves three things:
@@ -180,8 +182,8 @@ See [SECURITY.md](SECURITY.md) for the full threat model, including:
 
 ## Built With
 
-- [Google ADK](https://github.com/google/adk-python) 2.1 — multi-agent orchestration
-- [Gemini 2.5 Flash](https://ai.google.dev/) — agent reasoning + Google Search grounding
+- [Google ADK](https://github.com/google/adk-python) 2.1 — multi-agent orchestration + conversational operator surface
+- [Gemini 2.5 Flash](https://ai.google.dev/) — agent reasoning + Google Search grounding (not in the trust path)
 - [MCP](https://modelcontextprotocol.io/) — framework-agnostic tool integration
 - [Cloud Run](https://cloud.google.com/run) — serverless deployment (3 services)
 - [Cloud Firestore](https://cloud.google.com/firestore) — receipt chain persistence

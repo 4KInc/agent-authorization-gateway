@@ -35,7 +35,7 @@
   <rect x="250" y="86" width="200" height="10" fill="#0d9488"/>
   <text x="350" y="90" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">ORCHESTRATOR</text>
   <text x="350" y="114" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">ADK Root Agent</text>
-  <text x="350" y="130" text-anchor="middle" font-size="10" fill="#9c9889">Gemini 2.5 Flash · Routes requests</text>
+  <text x="350" y="130" text-anchor="middle" font-size="10" fill="#9c9889">ADK · Gemini · Routes requests</text>
 
   <!-- Arrow: User → Orchestrator -->
   <line x1="170" y1="110" x2="245" y2="110" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -47,7 +47,7 @@
   <rect x="30" y="232" width="200" height="10" fill="#d97706"/>
   <text x="130" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">WORKER AGENT</text>
   <text x="130" y="260" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Data Analytics Agent</text>
-  <text x="130" y="276" text-anchor="middle" font-size="10" fill="#9c9889">ADK + Gemini 2.5 Flash</text>
+  <text x="130" y="276" text-anchor="middle" font-size="10" fill="#9c9889">ADK + Gemini (operator surface)</text>
   <text x="130" y="292" text-anchor="middle" font-size="10" fill="#6b6860">Ed25519 identity keypair</text>
   <text x="130" y="306" text-anchor="middle" font-size="10" fill="#6b6860">Signs DPoP proof per request</text>
 
@@ -57,7 +57,7 @@
   <rect x="310" y="232" width="220" height="10" fill="#0d9488"/>
   <text x="420" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">GATEWAY AGENT</text>
   <text x="420" y="260" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Authorization Gateway</text>
-  <text x="420" y="276" text-anchor="middle" font-size="10" fill="#9c9889">ADK + Gemini 2.5 Flash</text>
+  <text x="420" y="276" text-anchor="middle" font-size="10" fill="#9c9889">Deterministic (no LLM in trust path)</text>
   <text x="420" y="292" text-anchor="middle" font-size="10" fill="#6b6860">Chat: read-only tools (blast radius)</text>
   <text x="420" y="306" text-anchor="middle" font-size="10" fill="#6b6860">MCP/REST: authorize_action</text>
 
