@@ -150,7 +150,7 @@ The demo proves three things:
 2. **Rogue Worker:** 4 attacks (no token, forged, expired, wrong-action) → all blocked with specific 401 codes
 3. **Tamper Detection:** Modify a stored receipt → chain verification detects the exact receipt and field
 
-See [examples/demo/SCRIPT.md](examples/demo/SCRIPT.md) for the 3-minute video script.
+Run `./examples/demo/run_demo.sh` to see the full demo locally.
 
 ## Live URLs
 
@@ -176,7 +176,6 @@ See [SECURITY.md](SECURITY.md) for the full threat model, including:
 | [SECURITY.md](SECURITY.md) | Threat model and security boundaries |
 | [docs/protocol.md](docs/protocol.md) | Receipt Chain Verification Protocol v0.1 |
 | [docs/policy.md](docs/policy.md) | Policy engine: rule types, examples, failure modes |
-| [examples/demo/SCRIPT.md](examples/demo/SCRIPT.md) | 3-minute demo video script |
 | [NAMING.md](NAMING.md) | Disambiguation from agentgateway project |
 
 ## Built With
