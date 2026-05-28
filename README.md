@@ -40,28 +40,45 @@ If an agent is compromised or hallucinates a dangerous action, existing framewor
 
 ## Architecture
 
+[![Architecture Diagram](docs/architecture.svg)](docs/architecture.svg)
+
 ```
-┌──────────────┐     MCP / REST        ┌───────────────────┐
-│  Worker Agent│ ──────────────────>   │  Authorization    │
-│  (ADK/Lang-  │  1. declare intent   │  Gateway          │
-│   Chain/any) │  2. agent proof      │  (Gemini + ADK)   │
-│              │ <──────────────────  │                   │
-│              │  3. Ed25519 token    │  ├ Policy Engine   │
-│              │     + signed receipt │  ├ Receipt Signer  │
-└──────┬───────┘                      │  ├ Token Issuer    │
-       │                              │  ├ Anchor Sink     │
-       │ 4. use token                 │  └ Agent Registry  │
-       v                              └─────────┬─────────┘
-┌──────────────┐                                │
-│  Protected   │                      ┌─────────┴─────────┐
-│  Resource    │                      │  Firestore         │
-│  (verifies   │                      │  Receipts · Keys   │
-│   token with │                      │  Policy · Anchors  │
-│   public key)│                      └───────────────────┘
-└──────────────┘
+                          MCP / REST
+ ┌─────────────────┐    (+ DPoP proof)     ┌──────────────────────────┐
+ │  Worker Agent   │ ───────────────────> │  Authorization Gateway   │
+ │  (ADK/LangChain │  1. register identity │  (Gemini + ADK)          │
+ │   /CrewAI/any)  │  2. sign DPoP proof   │                          │
+ │                 │  3. declare intent    │  ┌ Agent Registry        │
+ │  Ed25519 keypair│ <─────────────────── │  │  (DPoP verification)  │
+ │  per agent      │  4. Ed25519 token     │  ├ Policy Engine         │
+ │                 │     + signed receipt  │  │  (allowlist/scope/    │
+ └────────┬────────┘     (token_jti bound) │  │   rate limit)         │
+          │                                │  ├ Receipt Signer        │
+          │  5. use Ed25519 token           │  │  (Ed25519 + hash      │
+          │     (60s, single-use,          │  │   chain + Merkle)     │
+          │      action-bound)             │  ├ Token Issuer          │
+          v                                │  │  (Ed25519 JWT, 60s)   │
+ ┌─────────────────┐                       │  └ Anchor Sink           │
+ │ Protected       │                       │    (signed log / GCS)    │
+ │ Resource        │  fetch /keys          └────────────┬─────────────┘
+ │                 │ ·····················>              │
+ │ Verifies token: │                          ┌─────────┴──────────┐
+ │  • Ed25519 sig  │                          │  Cloud Firestore   │
+ │  • action_digest│                          │                    │
+ │  • JTI replay   │                          │  Receipts · Keys   │
+ │  • expiry       │                          │  Policy · Stats    │
+ └─────────────────┘                          │  Anchors · Agents  │
+                                              └────────────────────┘
+
+ Cloud Run Services:
+ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+ │ REST API +       │ │ MCP Server       │ │ ADK Chat Agent   │
+ │ Dashboard        │ │ (authorize,      │ │ (read-only tools │
+ │ (all endpoints)  │ │  verify, keys)   │ │  blast radius)   │
+ └──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
-See `docs/architecture.svg` for the full diagram.
+**[View full interactive diagram →](docs/architecture.svg)**
 
 ## The Receipt Chain Verification Protocol
 
