@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
 from .gateway_service import GatewayService
+from .identity import AgentRegistry, verify_agent_proof
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
 
@@ -36,6 +37,7 @@ logging.basicConfig(
 _gateway: GatewayService | None = None
 _store: ReceiptStore | None = None
 _anchor: AnchorSink | None = None
+_registry = AgentRegistry()
 
 
 def _get_gateway() -> GatewayService:
@@ -66,6 +68,7 @@ class AuthorizeRequest(BaseModel):
     action: str = Field(..., min_length=1, max_length=256, description="Action to authorize")
     resource: str = Field(..., min_length=1, max_length=512, description="Target resource")
     parameters: dict | None = None
+    agent_proof: str | None = Field(None, description="DPoP-style agent identity proof JWT (optional)")
 
     @field_validator("agent_id", "action", "resource")
     @classmethod
@@ -220,9 +223,28 @@ async def health():
 
 @api_app.post("/authorize", response_model=AuthorizeResponse)
 async def authorize(req: AuthorizeRequest):
-    """Authorize an agent action. Returns decision + receipt + token."""
+    """Authorize an agent action. Returns decision + receipt + token.
+
+    If agent_proof is provided, the Gateway verifies the agent's identity
+    before evaluating the policy. This binds the decision to a verified agent.
+    """
     gateway = _get_gateway()
     store = _get_store()
+
+    # Verify agent identity proof if provided
+    verified_agent = None
+    if req.agent_proof:
+        try:
+            verified_agent = verify_agent_proof(
+                proof=req.agent_proof,
+                registry=_registry,
+                expected_agent_id=req.agent_id,
+                expected_action=req.action,
+                expected_resource=req.resource,
+            )
+            logger.info(f"Agent identity verified: {verified_agent.agent_id} kid={verified_agent.kid}")
+        except ValueError as e:
+            raise HTTPException(401, str(e))
 
     response = gateway.authorize(
         agent_id=req.agent_id,
@@ -491,6 +513,36 @@ async def update_policy(req: UpdatePolicyRequest):
         "policy_hash": policy.policy_hash(),
         "rule_count": len(rules),
     }
+
+
+class AgentRegisterRequest(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=256)
+    public_key: dict = Field(..., description="Agent's Ed25519 public key as JWK")
+
+
+@api_app.post("/agents/register")
+async def register_agent(req: AgentRegisterRequest):
+    """Register an agent's public key for identity verification.
+
+    After registration, the agent can sign DPoP-style proofs that
+    the Gateway verifies before authorizing actions. This binds
+    authorization decisions to a specific verified identity.
+    """
+    try:
+        agent = _registry.register(req.agent_id, req.public_key)
+        return {
+            "status": "registered",
+            "agent_id": agent.agent_id,
+            "kid": agent.kid,
+        }
+    except Exception as e:
+        raise HTTPException(400, f"Registration failed: {e}")
+
+
+@api_app.get("/agents")
+async def list_agents():
+    """List all registered agents."""
+    return {"agents": _registry.list_agents()}
 
 
 @api_app.get("/anchors")
