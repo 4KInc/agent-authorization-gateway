@@ -22,6 +22,15 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0")
     args = parser.parse_args()
 
+    # Run signing key self-check before serving traffic
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    try:
+        from gateway.startup_check import run_signing_key_self_check
+        run_signing_key_self_check()
+    except Exception as e:
+        logging.getLogger("gateway.adk").warning(f"Startup self-check (non-fatal): {e}")
+
     app = get_fast_api_app(
         agents_dir=os.path.join(os.path.dirname(__file__), "authorization_gateway"),
         web=True,
