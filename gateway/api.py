@@ -167,6 +167,14 @@ async def lifespan(app: FastAPI):
         await store.save_keys(gateway.tenant, {"tenant": gateway.tenant, "keys": all_keys})
     except Exception as e:
         logger.warning(f"Store init (non-fatal): {e}")
+
+    # Startup self-check: verify signing key roundtrip
+    try:
+        from .startup_check import run_signing_key_self_check, check_chain_kid_consistency
+        run_signing_key_self_check()
+        await check_chain_kid_consistency(store, gateway.tenant, gateway._kid)
+    except Exception as e:
+        logger.warning(f"Startup self-check (non-fatal): {e}")
     yield
 
 

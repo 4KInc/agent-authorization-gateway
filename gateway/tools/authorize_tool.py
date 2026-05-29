@@ -63,6 +63,7 @@ def authorize_action(
     agent_id: str,
     action: str,
     resource: str,
+    agent_proof: str,
     parameters: str = "",
 ) -> dict:
     """Evaluate an AI agent's intended action against a security policy.
@@ -70,10 +71,14 @@ def authorize_action(
     Returns an authorization decision (approve/deny) with a cryptographic
     receipt and, if approved, a 60-second scoped authorization token.
 
+    SECURITY: agent_proof is REQUIRED. Calls without a valid DPoP proof
+    signed by a registered agent key are rejected before policy evaluation.
+
     Args:
         agent_id: Unique identifier of the requesting agent.
         action: Human-readable description of the intended action.
         resource: Target resource (database, API endpoint, cloud service).
+        agent_proof: DPoP-style proof JWT signed by the agent's Ed25519 private key.
         parameters: JSON string of action-specific parameters (optional).
 
     Returns:
@@ -90,12 +95,17 @@ def authorize_action(
     gateway = _get_gateway()
     store = _get_store()
 
-    response = gateway.authorize(
-        agent_id=agent_id,
-        action=action,
-        resource=resource,
-        parameters=params,
-    )
+    try:
+        response = gateway.authorize(
+            agent_id=agent_id,
+            action=action,
+            resource=resource,
+            parameters=params,
+            agent_proof=agent_proof,
+        )
+    except ValueError as e:
+        error_code = str(e).split(":")[0] if ":" in str(e) else "IDENTITY_ERROR"
+        return {"error": error_code, "detail": str(e)}
 
     # Persist receipt with action metadata for display
     enriched = {
@@ -111,7 +121,11 @@ def authorize_action(
         _run_async(store.save_receipt(gateway.tenant, enriched))
         _run_async(store.save_stats(gateway.tenant, gateway.get_chain_stats()))
     except Exception:
-        pass  # Don't fail authorization if persistence fails
+        import logging
+        logging.getLogger("gateway.adk_tool").exception(
+            "RECEIPT_PERSIST_FAILED: receipt not saved — token withheld"
+        )
+        return {"error": "RECEIPT_PERSIST_FAILED", "detail": "Receipt could not be persisted. Token withheld."}
 
     return {
         "decision": response.decision,

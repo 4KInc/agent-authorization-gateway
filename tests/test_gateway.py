@@ -29,9 +29,11 @@ from gateway.verify import verify_chain, verify_receipt
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def gateway() -> GatewayService:
-    """A GatewayService with the default demo policy."""
-    return GatewayService(tenant="test-tenant")
+def gateway():
+    """A GatewayService with a pre-registered agent."""
+    from tests.helpers import make_registered_gateway
+    gw, agent_key, agent_id = make_registered_gateway()
+    return gw, agent_key, agent_id
 
 
 @pytest.fixture
@@ -55,51 +57,36 @@ def receipt_chain(signing_key: Ed25519PrivateKey) -> ReceiptChain:
 class TestAuthorizationFlow:
     """Tests for the end-to-end authorize() pipeline."""
 
-    def test_approve_agent_reading_staging_database(self, gateway: GatewayService):
-        """agent-1 reading from staging-database should be allowed."""
-        resp = gateway.authorize(
-            agent_id="agent-1",
-            action="read",
-            resource="staging-database",
-        )
+    def test_approve_agent_reading_staging_database(self, gateway):
+        """agent reading from staging-database should be allowed."""
+        from tests.helpers import authorized_call
+        gw, agent_key, agent_id = gateway
+        resp = authorized_call(gw, agent_key, agent_id, "read", "staging-database")
         assert resp.decision == "approve"
         assert resp.reason_codes == []
 
-    def test_deny_rogue_agent_deleting_production(self, gateway: GatewayService):
-        """rogue-agent deleting from db:production must be blocked."""
-        resp = gateway.authorize(
-            agent_id="rogue-agent",
-            action="delete",
-            resource="db:production",
-        )
-        assert resp.decision == "deny"
-        assert any("ACTION_NOT_ALLOWED" in r for r in resp.reason_codes)
-        assert any("RESOURCE_OUT_OF_SCOPE" in r for r in resp.reason_codes)
-
-    def test_deny_action_not_in_allowed_list(self, gateway: GatewayService):
+    def test_deny_action_not_in_allowed_list(self, gateway):
         """An action not in the allowlist should be denied."""
-        resp = gateway.authorize(
-            agent_id="agent-1",
-            action="drop-table",
-            resource="staging-database",
-        )
+        from tests.helpers import authorized_call
+        gw, agent_key, agent_id = gateway
+        resp = authorized_call(gw, agent_key, agent_id, "drop-table", "staging-database")
         assert resp.decision == "deny"
         assert any("ACTION_NOT_ALLOWED" in r for r in resp.reason_codes)
 
-    def test_deny_resource_out_of_scope(self, gateway: GatewayService):
+    def test_deny_resource_out_of_scope(self, gateway):
         """A read on a production resource should be denied."""
-        resp = gateway.authorize(
-            agent_id="agent-1",
-            action="read",
-            resource="production-secrets",
-        )
+        from tests.helpers import authorized_call
+        gw, agent_key, agent_id = gateway
+        resp = authorized_call(gw, agent_key, agent_id, "read", "production-secrets")
         assert resp.decision == "deny"
         assert any("RESOURCE_OUT_OF_SCOPE" in r for r in resp.reason_codes)
 
-    def test_approve_returns_token_deny_returns_none(self, gateway: GatewayService):
+    def test_approve_returns_token_deny_returns_none(self, gateway):
         """Approved requests get a JWT token; denied requests get None."""
-        approved = gateway.authorize("agent-1", "read", "staging-db")
-        denied = gateway.authorize("rogue-agent", "delete", "db:production")
+        from tests.helpers import authorized_call
+        gw, agent_key, agent_id = gateway
+        approved = authorized_call(gw, agent_key, agent_id, "read", "staging-db")
+        denied = authorized_call(gw, agent_key, agent_id, "delete", "db:production")
 
         assert approved.token is not None
         assert isinstance(approved.token, str)

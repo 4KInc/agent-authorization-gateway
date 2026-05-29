@@ -70,7 +70,7 @@ def issue_token(
     - A unique jti (prevents replay)
     """
     now = time.time()
-    jti = str(uuid.uuid4())
+    jti = receipt_jti or str(uuid.uuid4())
     payload = {
         "iss": TOKEN_ISSUER,
         "aud": TOKEN_AUDIENCE,

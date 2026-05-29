@@ -14,6 +14,7 @@ dependencies = [
     "google-adk>=1.0.0",
     "mcp>=1.0.0",
     "google-cloud-firestore>=2.19.0",
+    "google-cloud-secret-manager>=2.20.0",
     "cryptography>=44.0.0",
     "PyJWT>=2.9.0",
     "uvicorn>=0.34.0",
@@ -25,6 +26,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gateway", "worker", "authorization_gateway"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

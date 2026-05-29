@@ -30,12 +30,43 @@ from gateway.identity import create_agent_proof
 
 def run():
     print("=" * 60)
-    print("  ROGUE WORKER DEMO — 4 ATTACK VARIANTS")
+    print("  ROGUE WORKER DEMO — 6 ATTACK VARIANTS")
     print("=" * 60)
 
     results = []
 
     with httpx.Client(timeout=15) as client:
+        # Attack (e): Anonymous authorize_action — no DPoP proof
+        print(f"\n[e] Attack: Anonymous authorize (no agent_proof)")
+        resp = client.post(f"{GATEWAY_URL}/authorize", json={
+            "agent_id": "anonymous-attacker",
+            "action": "read",
+            "resource": "staging-database",
+        })
+        status = resp.status_code
+        results.append(("No proof (422)", "422", f"{status}", status == 422))
+        print(f"    Expected: 422 (agent_proof required)")
+        print(f"    Actual:   {status}")
+        print(f"    Result:   {'BLOCKED' if status == 422 else 'FAILED TO BLOCK!'}")
+
+        # Attack (f): Authenticated transport but unregistered agent DPoP
+        print(f"\n[f] Attack: Unregistered agent DPoP proof")
+        rogue_key_dpop = Ed25519PrivateKey.generate()
+        proof = create_agent_proof(rogue_key_dpop, "unregistered-rogue", "read", "staging-database")
+        resp = client.post(f"{GATEWAY_URL}/authorize", json={
+            "agent_id": "unregistered-rogue",
+            "action": "read",
+            "resource": "staging-database",
+            "agent_proof": proof,
+        })
+        status = resp.status_code
+        detail = resp.json() if resp.status_code != 200 else {}
+        error_msg = str(detail.get("detail", ""))
+        results.append(("Unregistered DPoP", "401 UNREGISTERED", f"{status}", status == 401 and "UNREGISTERED" in error_msg))
+        print(f"    Expected: 401 UNREGISTERED_AGENT")
+        print(f"    Actual:   {status} {error_msg[:60]}")
+        print(f"    Result:   {'BLOCKED' if status == 401 else 'FAILED TO BLOCK!'}")
+
         # Attack (a): No token
         print(f"\n[a] Attack: No token (direct request without authorization)")
         resp = client.get(f"{RESOURCE_URL}/customers/c1")
@@ -135,17 +166,17 @@ def run():
             print(f"    Could not get a real token from Gateway")
 
     # Summary table
-    print(f"\n{'=' * 60}")
+    print(f"\n{'=' * 70}")
     print(f"  RESULTS SUMMARY")
-    print(f"{'=' * 60}")
-    print(f"  {'Attack':<25} {'Expected':<22} {'Actual':<22} {'Status'}")
-    print(f"  {'-'*25} {'-'*22} {'-'*22} {'-'*8}")
+    print(f"{'=' * 70}")
+    print(f"  {'Attack':<28} {'Expected':<22} {'Actual':<22} {'Status'}")
+    print(f"  {'-'*28} {'-'*22} {'-'*22} {'-'*8}")
     all_blocked = True
     for attack, expected, actual, blocked in results:
         status = "BLOCKED" if blocked else "FAIL"
         if not blocked:
             all_blocked = False
-        print(f"  {attack:<25} {expected:<22} {actual:<22} {status}")
+        print(f"  {attack:<28} {expected:<22} {actual:<22} {status}")
     print(f"\n  Overall: {'ALL ATTACKS BLOCKED' if all_blocked else 'SOME ATTACKS SUCCEEDED — ENFORCEMENT FAILED'}")
     print(f"{'=' * 60}")
 

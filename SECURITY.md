@@ -47,15 +47,25 @@ The ADK chat agent uses Gemini to interpret user requests. A prompt injection co
 
 The tamper-evidence guarantee relies on:
 
-1. **Receipt signing key integrity:** The Ed25519 private key has not been exfiltrated.
+1. **Single shared signing key:** All gateway surfaces (REST, MCP, ADK) load the SAME Ed25519 signing key from GCP Secret Manager at startup. There is exactly one kid in use across all services and all receipts. No per-instance key generation.
+2. **Receipt signing key integrity:** The Ed25519 private key has not been exfiltrated.
 2. **Anchor sink write-once property:** The Merkle root anchor destination (Cloud Storage with versioning, or the local signed log) is not retroactively rewritable without leaving evidence.
 3. **Verifier independence:** The receipt verification code (`gateway/verify.py`) uses only the public key and standard cryptographic operations. It does not trust the Gateway — it verifies against math.
+
+4. **Cross-surface persistence:** All gateway surfaces (REST, MCP, ADK) persist receipts to a shared Firestore collection (`tenants/{tenant}/receipts/`), with monotonic seq assignment resumed from Firestore on cold start. The chain is unbroken across surfaces and container restarts.
 
 **Important:** Firestore receipts are mutable by any operator with write access to the database. Tamper-evidence does not derive from Firestore — it derives from the Ed25519 signatures on each receipt and the external anchor sink. If a receipt is modified in Firestore, `verify_receipt` will detect the tampering because the signature will not match the modified body. Firestore is a convenience store for querying and display; the cryptographic chain is the source of truth.
 
 If any of the above assumptions are violated, the tamper-evidence guarantee degrades to "detection after the fact" rather than "prevention."
 
+### Operational Invariants
+
+- **Receipt persistence is a hard error.** Tokens are not returned to callers when the receipt could not be persisted. This prevents authorization without audit. If Firestore is unreachable, the caller receives `RECEIPT_PERSIST_FAILED` and no token — never a token with a missing receipt.
+- **No silent exception swallowing on security-critical paths.** Receipt persistence failures are logged with full tracebacks and surfaced to callers. The `try/except pass` pattern is prohibited on the authorize path.
+
 ## Cryptographic Choices
+
+**Demo chain reset (2026-05-28):** The receipt chain was reset as part of the migration to a single shared signing key in Secret Manager. Receipts prior to this date are preserved in `legacy_receipts_20260528` for audit history but are unverifiable under the current key. All receipts issued after this date are verifiable against the shared key in `/keys`.
 
 | Primitive | Choice | Why |
 |-----------|--------|-----|
@@ -65,6 +75,56 @@ If any of the above assumptions are violated, the tamper-evidence guarantee degr
 | Merkle tree | SHA-256, RFC 6962 domain separation | Prevents second-preimage attacks on the tree structure |
 | Canonicalization | RFC 8785 (JCS subset) | Deterministic JSON serialization for reproducible hashes across languages |
 | Token format | JWT with EdDSA signature | Industry-standard token format, verifiable by any JWT library supporting EdDSA |
+
+## MCP / API Authentication
+
+Token issuance requires **two independent layers of authentication**:
+
+### Layer 1: Transport Authentication
+The MCP server requires a valid credential on every connection:
+
+| Mode | Env var | Description |
+|------|---------|-------------|
+| `bearer` (default) | `MCP_AUTH_TOKEN` | Static shared secret in `Authorization: Bearer <token>` header |
+| `iam` | `MCP_IAM_AUDIENCE` | Google-signed ID token, verified against Google's public keys |
+| `none` | `GATEWAY_DEV_MODE=true` | **Dev only.** Server refuses to start in `none` mode without `GATEWAY_DEV_MODE=true`. |
+
+A startup assertion prevents an open MCP server from being deployed accidentally: if `MCP_AUTH_MODE=none` and `GATEWAY_DEV_MODE` is not `true`, the server exits non-zero with a fatal error.
+
+### Layer 2: Application Identity (DPoP)
+Every `authorize_action` call requires a DPoP-style proof JWT signed by the agent's registered Ed25519 private key. The proof binds the agent's identity to the specific action being authorized.
+
+**Enforcement is mandatory and lives in `GatewayService.authorize()`** — the single chokepoint that all three surfaces (MCP, REST, ADK) call. There is no optional bypass.
+
+Calls without a valid proof are rejected with specific error codes **before** policy evaluation or token issuance:
+- `NO_PROOF` — no `agent_proof` provided
+- `UNREGISTERED_AGENT` — agent not in the registry
+- `INVALID_PROOF_SIGNATURE` — proof signed with a key that doesn't match the registered key
+- `PROOF_EXPIRED` — proof older than 30 seconds
+- `PROOF_REPLAY` — proof JTI already used (distinct replay cache from token JTIs)
+- `PROOF_ACTION_MISMATCH` — proof action doesn't match the request action
+- `PROOF_RESOURCE_MISMATCH` — proof resource doesn't match the request resource
+- `PROOF_DIGEST_MISMATCH` — proof `action_digest` doesn't match the computed digest
+
+### Anonymous Endpoints
+`GET /keys` (REST API) is the only anonymous endpoint — public key distribution is a feature, not a leak. All other endpoints and MCP tools require transport authentication.
+
+### Threat: Anonymous Token Issuance
+**Status: Mitigated.** Previously, the MCP server accepted unauthenticated calls and `authorize_action` did not enforce DPoP proofs. This allowed anyone with the Cloud Run URL to mint real Ed25519 tokens. This is now closed at both layers: transport auth rejects anonymous connections, and the service layer rejects calls without a valid DPoP proof.
+
+### Known Limitation: htm/htu Not Enforced (v0.3)
+DPoP-style proofs carry `htm` (HTTP method) and `htu` (target URL) claims by convention (RFC 9449), but the gateway does not currently verify them. A proof intended for one endpoint could theoretically be presented to another endpoint on the same gateway within the 30-second freshness window.
+
+**Impact is bounded:** proofs are already bound to a specific `agent_id`, `action`, `resource`, and `action_digest`. The jti replay cache (30s TTL) prevents reuse. Endpoint binding (`htm`/`htu` enforcement) is planned for v0.3 once the gateway has a self-URL configuration mechanism for multi-endpoint deployments.
+
+### Dev Mode (`GATEWAY_DEV_MODE=true`)
+Setting `GATEWAY_DEV_MODE=true` permits one relaxation:
+
+- **MCP transport auth** — `MCP_AUTH_MODE=none` becomes permitted (without the flag, the server refuses to start in `none` mode).
+
+Dev mode is for local development only. The startup assertion prevents serving with auth disabled without the dev flag.
+
+**DNS rebinding protection** is always enabled regardless of dev mode. Allowed hosts are configured via `MCP_ALLOWED_HOSTS` (comma-separated hostnames). Localhost is always allowed. For Cloud Run, set `MCP_ALLOWED_HOSTS` to the service's FQDN. In production, use `MCP_AUTH_MODE=bearer` or `MCP_AUTH_MODE=iam`.
 
 ## LLM Blast Radius Containment
 

@@ -102,13 +102,23 @@ def create_agent_proof(
     agent_id: str,
     action: str,
     resource: str,
+    action_digest: str | None = None,
     gateway_url: str = "agent-authorization-gateway",
 ) -> str:
     """Create a DPoP-style proof JWT signed by the agent's private key.
 
     The proof binds the agent's identity to a specific action request,
     preventing replay and cross-action attacks.
+
+    action_digest is ALWAYS included. If not provided explicitly, it is
+    auto-computed from (agent_id, action, resource) using the same algorithm
+    as the gateway (canonicalize + SHA-256). This ensures proofs always
+    carry the mandatory digest binding.
     """
+    if action_digest is None:
+        from .tokens import compute_action_digest
+        action_digest = compute_action_digest(agent_id, action, resource)
+
     now = time.time()
     payload = {
         "sub": agent_id,
@@ -118,6 +128,7 @@ def create_agent_proof(
         "resource": resource,
         "jti": str(uuid.uuid4()),
         "iat": int(now),
+        "action_digest": action_digest,
     }
     return jwt.encode(payload, private_key, algorithm="EdDSA")
 
@@ -128,6 +139,7 @@ def verify_agent_proof(
     expected_agent_id: str,
     expected_action: str,
     expected_resource: str,
+    expected_action_digest: str | None = None,
 ) -> RegisteredAgent:
     """Verify a DPoP-style agent proof.
 
@@ -175,7 +187,21 @@ def verify_agent_proof(
     if claims.get("resource") != expected_resource:
         raise ValueError(f"PROOF_RESOURCE_MISMATCH: proof resource '{claims.get('resource')}' != '{expected_resource}'")
 
-    # Check JTI replay
+    # Check action_digest binding (MANDATORY when the gateway provides an expected digest)
+    if expected_action_digest:
+        proof_digest = claims.get("action_digest")
+        if not proof_digest:
+            raise ValueError(
+                f"PROOF_DIGEST_MISSING: proof must include action_digest claim "
+                f"(expected '{expected_action_digest}')"
+            )
+        if proof_digest != expected_action_digest:
+            raise ValueError(
+                f"PROOF_DIGEST_MISMATCH: proof action_digest '{proof_digest}' "
+                f"!= computed '{expected_action_digest}'"
+            )
+
+    # Check JTI replay (distinct cache from token JTIs)
     jti = claims.get("jti", "")
     if jti in _proof_jti_cache:
         raise ValueError("PROOF_REPLAY: proof JTI has already been used")

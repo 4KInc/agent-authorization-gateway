@@ -12,16 +12,19 @@ os.environ["FIRESTORE_ENABLED"] = ""
 from gateway.anchor import AnchorRecord, LocalAnchorSink
 from gateway.gateway_service import GatewayService
 from gateway.verify import verify_chain, verify_receipt
+from tests.helpers import make_registered_gateway, authorized_call
 
 
 class TestTamperDetection:
     """Verify tampering is detected at the specific receipt and field."""
 
     def setup_method(self):
-        self.gw = GatewayService(tenant="tamper-test")
+        from gateway import identity
+        identity._proof_jti_cache.clear()
+        self.gw, self.agent_key, self.agent_id = make_registered_gateway(tenant="tamper-test")
         # Build a chain of 5 receipts
-        for action in ["read", "query", "list", "search", "analyze"]:
-            self.gw.authorize(agent_id="a1", action=action, resource="staging-db")
+        for resource in ["staging-db", "dev-db", "test-db", "sandbox-db", "staging-analytics"]:
+            authorized_call(self.gw, self.agent_key, self.agent_id, "read", resource)
         self.chain = self.gw.get_receipt_chain()
         self.jwk = self.gw.get_public_key_jwk()
         assert len(self.chain) == 5
