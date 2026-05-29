@@ -1,208 +1,232 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 740" font-family="'DM Sans', system-ui, -apple-system, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" font-family="Inter, system-ui, sans-serif">
   <defs>
-    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%">
-      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.08"/>
-    </filter>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#6b6860"/>
-    </marker>
-    <marker id="arrow-teal" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#0d9488"/>
-    </marker>
-    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#dc2626"/>
-    </marker>
-    <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#d97706"/>
-    </marker>
+    <filter id="shadow"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.08"/></filter>
   </defs>
+  <rect width="1600" height="1100" fill="#fafafa"/>
 
-  <!-- Background -->
-  <rect width="1120" height="740" fill="#fafaf8" rx="12"/>
+  <!-- TITLE -->
+  <text x="800" y="40" text-anchor="middle" font-size="28" font-weight="bold" fill="#1e293b">Agent Authorization Gateway &#x2014; System Architecture</text>
+  <text x="800" y="62" text-anchor="middle" font-size="14" fill="#64748b">Track 1: Build (Net-New Agents) · Google ADK + MCP + Cloud Run + Firestore + Secret Manager</text>
 
-  <!-- Title -->
-  <text x="560" y="36" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1916" letter-spacing="-0.02em">Agent Authorization Gateway — System Architecture</text>
-  <text x="560" y="54" text-anchor="middle" font-size="12" fill="#9c9889">Track 1: Build (Net-New Agents) · Google ADK + MCP + Cloud Run + Firestore</text>
+  <!-- ============ BAND 1: EXTERNAL ENTITIES ============ -->
 
-  <!-- ========== USER ========== -->
-  <rect x="30" y="82" width="140" height="56" rx="8" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="100" y="108" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1916">User / Client</text>
-  <text x="100" y="124" text-anchor="middle" font-size="10" fill="#9c9889">API / Demo UI / Chat</text>
+  <!-- Worker Agent -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="90" width="300" height="190" rx="12" fill="white" stroke="#ea580c" stroke-width="2"/>
+    <rect x="60" y="90" width="300" height="32" rx="12" fill="#ea580c"/>
+    <rect x="60" y="110" width="300" height="12" fill="#ea580c"/>
+    <text x="210" y="112" text-anchor="middle" font-size="15" font-weight="bold" fill="white">WORKER AGENT</text>
+    <text x="80" y="148" font-size="17" font-weight="bold" fill="#1e293b">Independent Agent</text>
+    <text x="80" y="168" font-size="12" fill="#64748b">LangChain + raw MCP SDK</text>
+    <text x="80" y="184" font-size="12" fill="#64748b">Zero gateway imports</text>
+    <text x="80" y="206" font-size="13" fill="#1e293b">Ed25519 identity keypair</text>
+    <text x="80" y="224" font-size="13" fill="#1e293b">Signs DPoP proof per action</text>
+    <text x="80" y="244" font-size="13" fill="#1e293b">Computes action_digest (JCS + SHA-256)</text>
+    <text x="80" y="264" font-size="11" fill="#64748b">Conformance-tested against spec v0.3</text>
+  </g>
 
-  <!-- ========== ORCHESTRATOR ========== -->
-  <rect x="250" y="74" width="200" height="72" rx="10" fill="#fff" stroke="#0d9488" stroke-width="2" filter="url(#shadow)"/>
-  <rect x="250" y="74" width="200" height="22" rx="10" fill="#0d9488"/>
-  <rect x="250" y="86" width="200" height="10" fill="#0d9488"/>
-  <text x="350" y="90" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">ORCHESTRATOR</text>
-  <text x="350" y="114" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">ADK Root Agent</text>
-  <text x="350" y="130" text-anchor="middle" font-size="10" fill="#9c9889">ADK · Gemini · Routes requests</text>
+  <!-- ADK Chat Agent -->
+  <g filter="url(#shadow)">
+    <rect x="1240" y="90" width="300" height="190" rx="12" fill="white" stroke="#475569" stroke-width="2"/>
+    <rect x="1240" y="90" width="300" height="32" rx="12" fill="#475569"/>
+    <rect x="1240" y="110" width="300" height="12" fill="#475569"/>
+    <text x="1390" y="112" text-anchor="middle" font-size="13" font-weight="bold" fill="white">ADK CHAT AGENT (READ-ONLY)</text>
+    <text x="1260" y="148" font-size="16" font-weight="bold" fill="#1e293b">Deterministic Auditor</text>
+    <text x="1260" y="166" font-size="12" fill="#64748b">ADK + Gemini 2.5 Flash</text>
+    <text x="1260" y="186" font-size="12" fill="#1e293b">Tools: get_chain_stats,</text>
+    <text x="1280" y="200" font-size="12" fill="#1e293b">get_receipt_chain, verify_receipt,</text>
+    <text x="1280" y="214" font-size="12" fill="#1e293b">get_public_key</text>
+    <text x="1260" y="238" font-size="12" font-weight="bold" fill="#dc2626">Cannot issue tokens by design</text>
+    <text x="1260" y="264" font-size="11" fill="#64748b">LLM blast radius containment</text>
+  </g>
 
-  <!-- Arrow: User → Orchestrator -->
-  <line x1="170" y1="110" x2="245" y2="110" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="207" y="103" text-anchor="middle" font-size="9" fill="#9c9889">request</text>
+  <!-- Annotation -->
+  <text x="800" y="100" text-anchor="middle" font-size="11" font-style="italic" fill="#64748b">Both surfaces interact with the same gateway. Only the Worker has write capability (DPoP-authenticated).</text>
 
-  <!-- ========== WORKER AGENT ========== -->
-  <rect x="30" y="220" width="200" height="105" rx="10" fill="#fff" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
-  <rect x="30" y="220" width="200" height="22" rx="10" fill="#d97706"/>
-  <rect x="30" y="232" width="200" height="10" fill="#d97706"/>
-  <text x="130" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">WORKER AGENT</text>
-  <text x="130" y="260" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Data Analytics Agent</text>
-  <text x="130" y="276" text-anchor="middle" font-size="10" fill="#9c9889">ADK + Gemini (operator surface)</text>
-  <text x="130" y="292" text-anchor="middle" font-size="10" fill="#6b6860">Ed25519 identity keypair</text>
-  <text x="130" y="306" text-anchor="middle" font-size="10" fill="#6b6860">Signs DPoP proof per request</text>
+  <!-- ============ BAND 2: GATEWAY SERVICE ============ -->
 
-  <!-- ========== GATEWAY AGENT ========== -->
-  <rect x="310" y="220" width="220" height="105" rx="10" fill="#fff" stroke="#0d9488" stroke-width="2" filter="url(#shadow)"/>
-  <rect x="310" y="220" width="220" height="22" rx="10" fill="#0d9488"/>
-  <rect x="310" y="232" width="220" height="10" fill="#0d9488"/>
-  <text x="420" y="236" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">GATEWAY AGENT</text>
-  <text x="420" y="260" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Authorization Gateway</text>
-  <text x="420" y="276" text-anchor="middle" font-size="10" fill="#9c9889">Deterministic (no LLM in trust path)</text>
-  <text x="420" y="292" text-anchor="middle" font-size="10" fill="#6b6860">Chat: read-only tools (blast radius)</text>
-  <text x="420" y="306" text-anchor="middle" font-size="10" fill="#6b6860">MCP/REST: authorize_action</text>
+  <!-- Gateway Service main box -->
+  <g filter="url(#shadow)">
+    <rect x="380" y="340" width="520" height="330" rx="12" fill="white" stroke="#0d9488" stroke-width="3"/>
+    <rect x="380" y="340" width="520" height="36" rx="12" fill="#0d9488"/>
+    <rect x="380" y="364" width="520" height="12" fill="#0d9488"/>
+    <text x="640" y="364" text-anchor="middle" font-size="13" font-weight="bold" fill="white">GATEWAY SERVICE: gateway_service.authorize()</text>
+    <text x="640" y="394" text-anchor="middle" font-size="12" fill="#64748b">Single enforcement chokepoint. REST, MCP, ADK all route here.</text>
+    <!-- Stage 1 -->
+    <circle cx="420" cy="430" r="14" fill="#0d9488"/>
+    <text x="420" y="435" text-anchor="middle" font-size="13" font-weight="bold" fill="white">1</text>
+    <text x="445" y="435" font-size="14" fill="#1e293b">Verify DPoP proof</text>
+    <!-- Stage 2 -->
+    <circle cx="420" cy="475" r="14" fill="#0d9488"/>
+    <text x="420" y="480" text-anchor="middle" font-size="13" font-weight="bold" fill="white">2</text>
+    <text x="445" y="480" font-size="14" fill="#1e293b">Evaluate policy</text>
+    <!-- Stage 3 -->
+    <circle cx="420" cy="520" r="14" fill="#0d9488"/>
+    <text x="420" y="525" text-anchor="middle" font-size="13" font-weight="bold" fill="white">3</text>
+    <text x="445" y="525" font-size="14" fill="#1e293b">Sign receipt (Ed25519 + hash chain)</text>
+    <!-- Stage 4 -->
+    <circle cx="420" cy="565" r="14" fill="#0d9488"/>
+    <text x="420" y="570" text-anchor="middle" font-size="13" font-weight="bold" fill="white">4</text>
+    <text x="445" y="570" font-size="14" fill="#1e293b">Issue scoped token (Ed25519 JWT, 60s)</text>
+    <!-- Notes -->
+    <text x="640" y="620" text-anchor="middle" font-size="11" font-style="italic" fill="#64748b">Receipt persistence is atomic: no token without a persisted receipt.</text>
+    <text x="640" y="636" text-anchor="middle" font-size="11" font-style="italic" fill="#64748b">DPoP proof required on every call. Absence is a hard NO_PROOF rejection.</text>
+    <text x="640" y="652" text-anchor="middle" font-size="11" font-style="italic" fill="#64748b">action_digest mandatory in proof (v0.3). Missing is PROOF_DIGEST_MISSING.</text>
+  </g>
 
-  <!-- Arrow: Orchestrator → Worker -->
-  <path d="M300,146 L300,165 L130,165 L130,215" fill="none" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
-  <text x="215" y="160" text-anchor="middle" font-size="9" fill="#d97706">transfer_to_agent</text>
+  <!-- Agent Registry -->
+  <g filter="url(#shadow)">
+    <rect x="960" y="410" width="240" height="60" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <text x="1080" y="432" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Agent Registry</text>
+    <text x="1080" y="448" text-anchor="middle" font-size="11" fill="#64748b">DPoP identity verification</text>
+    <text x="1080" y="462" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">In-memory (demo)</text>
+  </g>
+  <line x1="900" y1="430" x2="960" y2="435" stroke="#7c3aed" stroke-width="1.5"/>
 
-  <!-- Arrow: Orchestrator → Gateway -->
-  <path d="M400,146 L400,165 L420,165 L420,215" fill="none" stroke="#0d9488" stroke-width="1.5" marker-end="url(#arrow-teal)"/>
-  <text x="460" y="160" text-anchor="middle" font-size="9" fill="#0d9488">transfer_to_agent</text>
+  <!-- Policy Engine -->
+  <g filter="url(#shadow)">
+    <rect x="960" y="485" width="240" height="55" rx="10" fill="white" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="1080" y="507" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Policy Engine</text>
+    <text x="1080" y="523" text-anchor="middle" font-size="11" fill="#64748b">Deterministic Python: allowlist, scope, rate limit</text>
+  </g>
+  <line x1="900" y1="475" x2="960" y2="505" stroke="#0d9488" stroke-width="1.5"/>
 
-  <!-- ========== MCP CONNECTION ========== -->
-  <rect x="237" y="267" width="68" height="20" rx="4" fill="#fef3c7" stroke="#d97706"/>
-  <text x="271" y="281" text-anchor="middle" font-size="10" font-weight="600" fill="#d97706">MCP</text>
+  <!-- Receipt Signer -->
+  <g filter="url(#shadow)">
+    <rect x="960" y="555" width="240" height="55" rx="10" fill="white" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="1080" y="577" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Receipt Signer</text>
+    <text x="1080" y="593" text-anchor="middle" font-size="11" fill="#64748b">Ed25519 + hash chain + token_jti binding</text>
+  </g>
+  <line x1="900" y1="520" x2="960" y2="575" stroke="#0d9488" stroke-width="1.5"/>
 
-  <!-- Arrow: Worker → Gateway via MCP -->
-  <line x1="230" y1="277" x2="234" y2="277" stroke="#d97706" stroke-width="2"/>
-  <line x1="305" y1="277" x2="308" y2="277" stroke="#d97706" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
-  <text x="271" y="262" text-anchor="middle" font-size="9" fill="#d97706">intent + DPoP proof</text>
+  <!-- Token Issuer -->
+  <g filter="url(#shadow)">
+    <rect x="960" y="625" width="240" height="55" rx="10" fill="white" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="1080" y="647" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Token Issuer</text>
+    <text x="1080" y="663" text-anchor="middle" font-size="11" fill="#64748b">Ed25519 JWT (EdDSA), 60s TTL, action-bound</text>
+  </g>
+  <line x1="900" y1="565" x2="960" y2="645" stroke="#0d9488" stroke-width="1.5"/>
 
-  <!-- ========== AGENT REGISTRY ========== -->
-  <rect x="610" y="220" width="170" height="55" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="695" y="244" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Agent Registry</text>
-  <text x="695" y="260" text-anchor="middle" font-size="10" fill="#9c9889">DPoP identity verification</text>
-  <text x="695" y="272" text-anchor="middle" font-size="10" fill="#6b6860">Ed25519 public keys per agent</text>
+  <!-- Verification API -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="450" width="260" height="70" rx="10" fill="white" stroke="#0d9488" stroke-width="1.5" stroke-dasharray="6,4"/>
+    <text x="190" y="475" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Verification API</text>
+    <text x="190" y="492" text-anchor="middle" font-size="11" fill="#64748b">/verify-receipt, /verify-chain</text>
+    <text x="190" y="508" text-anchor="middle" font-size="11" fill="#64748b">Independent. Public key only.</text>
+  </g>
 
-  <!-- Arrow: Gateway → Agent Registry -->
-  <line x1="530" y1="250" x2="605" y2="245" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="568" y="240" text-anchor="middle" font-size="9" fill="#9c9889">verify proof</text>
+  <!-- ADK → Verification API -->
+  <line x1="1240" y1="260" x2="320" y2="470" stroke="#475569" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="760" y="335" text-anchor="middle" font-size="11" fill="#475569">read-only queries</text>
 
-  <!-- ========== POLICY ENGINE ========== -->
-  <rect x="610" y="295" width="170" height="55" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="695" y="317" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Policy Engine</text>
-  <text x="695" y="333" text-anchor="middle" font-size="10" fill="#9c9889">Deterministic Python rules</text>
-  <text x="695" y="345" text-anchor="middle" font-size="10" fill="#6b6860">Allowlist · Scope · Rate limit</text>
+  <!-- Worker → Gateway -->
+  <line x1="360" y1="250" x2="480" y2="340" stroke="#ea580c" stroke-width="2.5"/>
+  <rect x="370" y="288" width="90" height="20" rx="10" fill="#ea580c"/>
+  <text x="415" y="302" text-anchor="middle" font-size="11" font-weight="bold" fill="white">via MCP</text>
+  <text x="310" y="310" text-anchor="middle" font-size="11" fill="#ea580c">intent + DPoP proof</text>
 
-  <!-- Arrow: Gateway → Policy -->
-  <line x1="530" y1="290" x2="605" y2="310" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="568" y="293" text-anchor="middle" font-size="9" fill="#9c9889">evaluate</text>
+  <!-- Gateway → Worker -->
+  <line x1="440" y1="340" x2="310" y2="260" stroke="#0d9488" stroke-width="2"/>
+  <text x="330" y="326" text-anchor="middle" font-size="11" fill="#0d9488">receipt + token</text>
 
-  <!-- ========== RECEIPT SIGNER ========== -->
-  <rect x="610" y="370" width="170" height="55" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="695" y="392" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Receipt Signer</text>
-  <text x="695" y="408" text-anchor="middle" font-size="10" fill="#9c9889">Ed25519 signatures</text>
-  <text x="695" y="420" text-anchor="middle" font-size="10" fill="#6b6860">Hash chain + token_jti binding</text>
+  <!-- ============ PROTECTED RESOURCE ============ -->
+  <g filter="url(#shadow)">
+    <rect x="1280" y="380" width="260" height="210" rx="12" fill="white" stroke="#dc2626" stroke-width="3"/>
+    <rect x="1280" y="380" width="260" height="32" rx="12" fill="#dc2626"/>
+    <rect x="1280" y="400" width="260" height="12" fill="#dc2626"/>
+    <text x="1410" y="402" text-anchor="middle" font-size="14" font-weight="bold" fill="white">PROTECTED RESOURCE</text>
+    <text x="1300" y="432" font-size="12" fill="#64748b">Database, API, Cloud Service</text>
+    <text x="1300" y="460" font-size="12" font-weight="bold" fill="#1e293b">Verifies Ed25519 token:</text>
+    <text x="1310" y="480" font-size="11" fill="#1e293b">&#x2022; Signature (gateway public key)</text>
+    <text x="1310" y="496" font-size="11" fill="#1e293b">&#x2022; action_digest matches request</text>
+    <text x="1310" y="512" font-size="11" fill="#1e293b">&#x2022; JTI not in replay cache</text>
+    <text x="1310" y="528" font-size="11" fill="#1e293b">&#x2022; Token not expired (60s)</text>
+    <text x="1300" y="556" font-size="11" fill="#64748b">Fetches /keys to verify tokens</text>
+    <text x="1300" y="572" font-size="11" fill="#64748b">No shared secret needed</text>
+  </g>
 
-  <!-- Arrow: Gateway → Receipt Signer -->
-  <line x1="530" y1="310" x2="605" y2="385" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="555" y="355" text-anchor="middle" font-size="9" fill="#9c9889">sign</text>
+  <!-- Worker → Resource -->
+  <line x1="260" y1="280" x2="1280" y2="440" stroke="#dc2626" stroke-width="2"/>
+  <text x="760" y="370" text-anchor="middle" font-size="11" fill="#dc2626">(5) use Ed25519 token (60s, single-use, action-bound)</text>
 
-  <!-- ========== TOKEN ISSUER ========== -->
-  <rect x="610" y="445" width="170" height="55" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="695" y="467" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Token Issuer</text>
-  <text x="695" y="483" text-anchor="middle" font-size="10" fill="#9c9889">Ed25519 JWT (EdDSA) · 60s TTL</text>
-  <text x="695" y="495" text-anchor="middle" font-size="10" fill="#6b6860">Action-bound · Single-use (JTI)</text>
+  <!-- Resource → Gateway /keys -->
+  <line x1="1280" y1="570" x2="900" y2="580" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="1100" y="590" text-anchor="middle" font-size="11" fill="#94a3b8">fetch /keys</text>
 
-  <!-- Arrow: Gateway → Token -->
-  <line x1="500" y1="325" x2="605" y2="460" stroke="#0d9488" stroke-width="1.5" marker-end="url(#arrow-teal)"/>
-  <text x="535" y="405" text-anchor="middle" font-size="9" fill="#0d9488">issue token</text>
+  <!-- ============ BAND 3: STORAGE ============ -->
 
-  <!-- ========== FIRESTORE ========== -->
-  <rect x="870" y="280" width="210" height="95" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="975" y="305" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Cloud Firestore</text>
-  <text x="975" y="323" text-anchor="middle" font-size="10" fill="#9c9889">Shared state across services</text>
-  <text x="975" y="341" text-anchor="middle" font-size="10" fill="#6b6860">Receipts · Keys · Stats</text>
-  <text x="975" y="357" text-anchor="middle" font-size="10" fill="#6b6860">Policy · Rate limits · Agents</text>
-  <text x="975" y="370" text-anchor="middle" font-size="10" fill="#6b6860">Merkle anchors</text>
+  <!-- Cloud Firestore -->
+  <g filter="url(#shadow)">
+    <rect x="300" y="730" width="280" height="110" rx="12" fill="white" stroke="#94a3b8" stroke-width="2"/>
+    <text x="440" y="758" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Cloud Firestore</text>
+    <text x="440" y="776" text-anchor="middle" font-size="11" fill="#1e293b">Persistent receipt chain</text>
+    <text x="440" y="794" text-anchor="middle" font-size="11" fill="#64748b">Receipts, Stats, Policy, Rate limits, Anchors</text>
+    <text x="440" y="812" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">Monotonic seq across surfaces + cold starts</text>
+  </g>
+  <line x1="640" y1="670" x2="480" y2="730" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="530" y="700" font-size="11" fill="#94a3b8">persist (atomic)</text>
 
-  <!-- Arrow: Receipt Signer → Firestore -->
-  <line x1="780" y1="395" x2="865" y2="340" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="823" y="360" text-anchor="middle" font-size="9" fill="#9c9889">persist</text>
+  <!-- GCP Secret Manager -->
+  <g filter="url(#shadow)">
+    <rect x="640" y="730" width="280" height="110" rx="12" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <text x="780" y="758" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">GCP Secret Manager</text>
+    <text x="780" y="776" text-anchor="middle" font-size="11" fill="#1e293b">Single shared Ed25519 signing key</text>
+    <text x="780" y="794" text-anchor="middle" font-size="11" fill="#64748b">kid + private PEM, loaded at startup</text>
+    <text x="780" y="812" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">Same key in REST, MCP, ADK</text>
+    <text x="780" y="828" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">IAM: secretAccessor on this secret only</text>
+  </g>
+  <line x1="640" y1="376" x2="750" y2="730" stroke="#7c3aed" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="750" y="700" text-anchor="middle" font-size="10" fill="#7c3aed">load signing key at startup</text>
 
-  <!-- ========== ANCHOR SINK ========== -->
-  <rect x="870" y="410" width="210" height="65" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="975" y="435" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Anchor Sink</text>
-  <text x="975" y="451" text-anchor="middle" font-size="10" fill="#9c9889">Write-once tamper evidence</text>
-  <text x="975" y="467" text-anchor="middle" font-size="10" fill="#6b6860">Local signed log · GCS versioned</text>
+  <!-- Anchor Sink -->
+  <g filter="url(#shadow)">
+    <rect x="980" y="730" width="280" height="110" rx="12" fill="white" stroke="#94a3b8" stroke-width="2"/>
+    <text x="1120" y="758" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Anchor Sink</text>
+    <text x="1120" y="776" text-anchor="middle" font-size="11" fill="#1e293b">Write-once tamper evidence</text>
+    <text x="1120" y="794" text-anchor="middle" font-size="11" fill="#64748b">Local signed log or GCS versioned</text>
+    <text x="1120" y="812" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">External to gateway trust boundary</text>
+  </g>
+  <line x1="1080" y1="610" x2="1120" y2="730" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1140" y="700" font-size="11" fill="#94a3b8">anchor root</text>
 
-  <!-- Arrow: Receipt Signer → Anchor -->
-  <line x1="780" y1="410" x2="865" y2="435" stroke="#6b6860" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="823" y="415" text-anchor="middle" font-size="9" fill="#9c9889">anchor root</text>
+  <!-- ============ FOOTER 1: CLOUD RUN SERVICES ============ -->
+  <rect x="40" y="870" width="1520" height="56" rx="8" fill="#f1f5f9"/>
+  <text x="60" y="892" font-size="13" font-weight="bold" fill="#64748b">Google Cloud Run: 5 Services</text>
+  <rect x="60" y="900" width="280" height="20" rx="6" fill="#0d9488"/>
+  <text x="200" y="915" text-anchor="middle" font-size="12" font-weight="bold" fill="white">REST API</text>
+  <rect x="350" y="900" width="280" height="20" rx="6" fill="#ea580c"/>
+  <text x="490" y="915" text-anchor="middle" font-size="12" font-weight="bold" fill="white">MCP Server</text>
+  <rect x="640" y="900" width="280" height="20" rx="6" fill="#475569"/>
+  <text x="780" y="915" text-anchor="middle" font-size="12" font-weight="bold" fill="white">ADK Chat Agent (read-only)</text>
+  <rect x="930" y="900" width="280" height="20" rx="6" fill="#dc2626"/>
+  <text x="1070" y="915" text-anchor="middle" font-size="12" font-weight="bold" fill="white">Protected Resource</text>
+  <rect x="1220" y="900" width="280" height="20" rx="6" fill="#94a3b8"/>
+  <text x="1360" y="915" text-anchor="middle" font-size="12" font-weight="bold" fill="white">Demo UI (Next.js)</text>
 
-  <!-- ========== VERIFICATION API ========== -->
-  <rect x="310" y="420" width="220" height="60" rx="10" fill="#fff" stroke="#e8e6e1" filter="url(#shadow)"/>
-  <text x="420" y="445" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Verification API</text>
-  <text x="420" y="461" text-anchor="middle" font-size="10" fill="#9c9889">/verify-receipt · /verify-chain</text>
-  <text x="420" y="473" text-anchor="middle" font-size="10" fill="#6b6860">Independent — public key only</text>
+  <!-- ============ FOOTER 2: AUTHORIZATION FLOW ============ -->
+  <rect x="40" y="940" width="1520" height="50" rx="8" fill="#f1f5f9"/>
+  <text x="60" y="960" font-size="13" font-weight="bold" fill="#64748b">Authorization Flow</text>
+  <circle cx="80" cy="978" r="12" fill="#f59e0b"/>
+  <text x="80" y="983" text-anchor="middle" font-size="12" font-weight="bold" fill="white">1</text>
+  <text x="100" y="983" font-size="11" fill="#1e293b">Worker signs DPoP proof via MCP</text>
+  <circle cx="380" cy="978" r="12" fill="#0d9488"/>
+  <text x="380" y="983" text-anchor="middle" font-size="12" font-weight="bold" fill="white">2</text>
+  <text x="400" y="983" font-size="11" fill="#1e293b">Gateway verifies identity + policy</text>
+  <circle cx="660" cy="978" r="12" fill="#0d9488"/>
+  <text x="660" y="983" text-anchor="middle" font-size="12" font-weight="bold" fill="white">3</text>
+  <text x="680" y="983" font-size="11" fill="#1e293b">Signs receipt + issues Ed25519 token</text>
+  <circle cx="960" cy="978" r="12" fill="#dc2626"/>
+  <text x="960" y="983" text-anchor="middle" font-size="12" font-weight="bold" fill="white">4</text>
+  <text x="980" y="983" font-size="11" fill="#1e293b">Resource verifies token with public key</text>
+  <circle cx="1280" cy="978" r="12" fill="#94a3b8"/>
+  <text x="1280" y="983" text-anchor="middle" font-size="12" font-weight="bold" fill="white">5</text>
+  <text x="1300" y="983" font-size="11" fill="#1e293b">Merkle root anchored to external sink</text>
 
-  <!-- Arrow: Gateway → Verification -->
-  <line x1="420" y1="325" x2="420" y2="415" stroke="#6b6860" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
-
-  <!-- ========== PROTECTED RESOURCE ========== -->
-  <rect x="30" y="410" width="200" height="80" rx="10" fill="#fff" stroke="#dc2626" stroke-width="1.5" filter="url(#shadow)"/>
-  <text x="130" y="435" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1916">Protected Resource</text>
-  <text x="130" y="451" text-anchor="middle" font-size="10" fill="#9c9889">Database · API · Cloud Service</text>
-  <text x="130" y="467" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="600">Verifies Ed25519 token</text>
-  <text x="130" y="481" text-anchor="middle" font-size="10" fill="#6b6860">JTI replay cache · action binding</text>
-
-  <!-- Arrow: Worker → Resource -->
-  <line x1="130" y1="325" x2="130" y2="405" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow-red)"/>
-  <text x="155" y="370" font-size="9" fill="#dc2626">use Ed25519 token</text>
-
-  <!-- Arrow: Resource → Gateway (fetch public key) -->
-  <path d="M230,455 L280,455 L280,350 L305,350" fill="none" stroke="#6b6860" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
-  <text x="260" y="395" font-size="8" fill="#9c9889" transform="rotate(-90 260 395)">fetch /keys</text>
-
-  <!-- ========== CLOUD RUN BOUNDARY ========== -->
-  <rect x="15" y="520" width="1090" height="50" rx="8" fill="#f5f4f0" stroke="#e8e6e1"/>
-  <text x="560" y="542" text-anchor="middle" font-size="11" font-weight="600" fill="#6b6860">Google Cloud Run — 3 Services</text>
-  <rect x="30" y="552" width="310" height="15" rx="4" fill="#0d9488"/>
-  <text x="185" y="563" text-anchor="middle" font-size="9" font-weight="600" fill="#fff">REST API (:8080)</text>
-  <rect x="355" y="552" width="310" height="15" rx="4" fill="#d97706"/>
-  <text x="510" y="563" text-anchor="middle" font-size="9" font-weight="600" fill="#fff">MCP Server (:8080/mcp)</text>
-  <rect x="680" y="552" width="310" height="15" rx="4" fill="#475569"/>
-  <text x="835" y="563" text-anchor="middle" font-size="9" font-weight="600" fill="#fff">ADK Chat Agent (read-only)</text>
-
-  <!-- ========== FLOW LEGEND ========== -->
-  <rect x="15" y="590" width="1090" height="65" rx="8" fill="#fff" stroke="#e8e6e1"/>
-  <text x="35" y="610" font-size="11" font-weight="700" fill="#1a1916">Authorization Flow</text>
-
-  <circle cx="35" cy="635" r="10" fill="#fef3c7" stroke="#d97706"/>
-  <text x="37" y="639" text-anchor="middle" font-size="9" font-weight="700" fill="#d97706">1</text>
-  <text x="52" y="639" font-size="10" fill="#6b6860">Worker signs DPoP proof + declares intent via MCP</text>
-
-  <circle cx="310" cy="635" r="10" fill="#ccfbf1" stroke="#0d9488"/>
-  <text x="312" y="639" text-anchor="middle" font-size="9" font-weight="700" fill="#0d9488">2</text>
-  <text x="327" y="639" font-size="10" fill="#6b6860">Gateway verifies identity + evaluates policy</text>
-
-  <circle cx="560" cy="635" r="10" fill="#ccfbf1" stroke="#0d9488"/>
-  <text x="562" y="639" text-anchor="middle" font-size="9" font-weight="700" fill="#0d9488">3</text>
-  <text x="577" y="639" font-size="10" fill="#6b6860">Signs receipt + issues Ed25519 token (60s)</text>
-
-  <circle cx="795" cy="635" r="10" fill="#fee2e2" stroke="#dc2626"/>
-  <text x="797" y="639" text-anchor="middle" font-size="9" font-weight="700" fill="#dc2626">4</text>
-  <text x="812" y="639" font-size="10" fill="#6b6860">Resource verifies token with public key</text>
-
-  <circle cx="1005" cy="635" r="10" fill="#f5f4f0" stroke="#6b6860"/>
-  <text x="1007" y="639" text-anchor="middle" font-size="9" font-weight="700" fill="#6b6860">5</text>
-  <text x="1022" y="639" font-size="10" fill="#6b6860">Merkle root anchored</text>
-
-  <!-- ========== KEY PROPERTIES ========== -->
-  <rect x="15" y="670" width="1090" height="55" rx="8" fill="#f5f4f0" stroke="#e8e6e1"/>
-  <text x="35" y="690" font-size="10" font-weight="700" fill="#1a1916">Security Properties</text>
-  <text x="35" y="710" font-size="10" fill="#6b6860">No HS256 — all tokens Ed25519 (EdDSA)</text>
-  <text x="300" y="710" font-size="10" fill="#6b6860">Receipt ↔ Token bound via JTI</text>
-  <text x="530" y="710" font-size="10" fill="#6b6860">Agent identity: DPoP proof per request</text>
-  <text x="800" y="710" font-size="10" fill="#6b6860">Chat agent: read-only (no authorize)</text>
+  <!-- ============ FOOTER 3: SECURITY PROPERTIES ============ -->
+  <rect x="40" y="1000" width="1520" height="40" rx="8" fill="#f1f5f9"/>
+  <text x="60" y="1018" font-size="13" font-weight="bold" fill="#64748b">Security Properties</text>
+  <text x="60" y="1034" font-size="11" fill="#1e293b">No HS256. All tokens Ed25519 (EdDSA).</text>
+  <text x="380" y="1034" font-size="11" fill="#1e293b">Receipt and token bound via JTI.</text>
+  <text x="700" y="1034" font-size="11" fill="#1e293b">Agent identity: DPoP proof per request.</text>
+  <text x="1060" y="1034" font-size="11" fill="#1e293b">ADK chat agent: read-only. Cannot issue tokens.</text>
 </svg>
