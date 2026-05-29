@@ -17,6 +17,8 @@ dependencies = [
     "google-cloud-secret-manager>=2.20.0",
     "cryptography>=44.0.0",
     "PyJWT>=2.9.0",
+    "web3>=7.0.0",
+    "eth-account>=0.13.0",
     "uvicorn>=0.34.0",
     "httpx>=0.28.0",
 ]

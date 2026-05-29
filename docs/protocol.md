@@ -1,6 +1,7 @@
-# Receipt Chain Verification Protocol v0.3.1
+# Receipt Chain Verification Protocol v0.4
 
 > **Changelog:**
+> - v0.4 — On-chain anchoring of Merkle roots to Base L2 mainnet. Batched (every 10 receipts or hourly). Async, never on trust path. Each anchor record includes the Base transaction hash, block number, and block timestamp. `GET /anchors` and `GET /anchors/verify/{tx_hash}` endpoints added.
 > - v0.3.1 — `/verify-receipt` now performs bounded chain verification (single prev_receipt link check). Genesis returns PASS. Broken link returns FAIL with `PREV_LINK_BROKEN`. Missing predecessor returns INCONCLUSIVE with `PREV_NOT_FOUND`.
 > - v0.3 — `action_digest` now mandatory in every proof (missing = `PROOF_DIGEST_MISSING`); `htm`/`htu` scoped as named limitation for v0.4.
 > - v0.2 — documented authorization-side protocol (action digest, agent proof, registration, MCP tool signatures, transport authentication).
@@ -557,4 +558,81 @@ The reference implementation is in this repository:
 - `gateway/canonical.py` — JCS canonicalization
 - `gateway/merkle.py` — Merkle tree construction
 - `gateway/mcp_server.py` — MCP tool definitions
+- `gateway/base_anchor.py` — On-chain anchoring to Base L2
+- `gateway/anchor_scheduler.py` — Batched async anchor scheduler
 - `serve_mcp.py` — Transport authentication middleware
+
+---
+
+## On-Chain Merkle Anchoring (v0.4)
+
+Tamper evidence for the audit chain comes from three independent layers:
+
+1. **Cryptographic linkage** (every receipt): SHA-256 chain of prev_receipt hashes. Detects modification of any individual receipt.
+2. **Signed receipts** (every receipt): Ed25519 signatures over canonical receipt bodies. Detects forgery without the gateway's private key.
+3. **On-chain anchoring** (batched, hourly): Merkle root of the chain head committed to Base L2 mainnet via a value-0 transaction whose calldata is the root. Detects retroactive rewriting of historical chain state, even by an attacker with full gateway and Firestore access, because the root at each anchored block height is publicly recorded.
+
+### Anchoring Policy
+
+Anchoring is performed by a background scheduler running on the REST gateway service (single source, no nonce races). Triggers:
+- Every 10 new receipts since the last anchor, OR
+- Every 1 hour, whichever comes first
+
+Each anchor commits the current chain-head Merkle root to Base via a transaction to the burn address (`0x0000...0000`) with the root as calldata. Gas cost is approximately 21,000 + 16*32 gas, well under 1 cent at Base L2 prices.
+
+### Anchor Record Format
+
+Stored in Firestore at `tenants/{tenant}/anchors/{tx_hash_prefix}` and exposed via `GET /anchors`:
+
+```json
+{
+  "merkle_root": "sha256:<64 hex chars>",
+  "tx_hash": "0x<64 hex chars>",
+  "block_number": 12345678,
+  "block_timestamp": 1735689600,
+  "chain_head_seq": 142,
+  "anchored_at": "2026-05-29T15:42:00Z",
+  "chain_id": 8453,
+  "basescan_url": "https://basescan.org/tx/0x..."
+}
+```
+
+### Independent Anchor Verification
+
+Anyone can verify an anchor without trusting the gateway:
+
+```python
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider("https://mainnet.base.org"))
+tx = w3.eth.get_transaction("0x<tx_hash>")
+assert tx.input.hex()[2:] == "<merkle_root_hex>"
+block = w3.eth.get_block(tx.blockNumber)
+print(f"Anchored at block {tx.blockNumber}, timestamp {block.timestamp}")
+```
+
+Or use the gateway's verification endpoint:
+
+```
+GET /anchors/verify/{tx_hash}
+```
+
+Returns:
+```json
+{
+  "tx_found": true,
+  "calldata_matches_recorded_root": true,
+  "block_number": 12345678,
+  "block_timestamp": 1735689600,
+  "merkle_root_on_chain": "sha256:...",
+  "merkle_root_recorded": "sha256:..."
+}
+```
+
+### Failure Modes
+
+If Base mainnet is unreachable when an anchor cycle runs:
+- The anchor is skipped
+- The receipt chain continues unaffected
+- The next anchor cycle retries with the new chain head
+
+If the gateway is compromised and stops anchoring, everything before the last legitimate anchor is cryptographically committed on-chain. The time between the last anchor and the moment of compromise is unprotected.

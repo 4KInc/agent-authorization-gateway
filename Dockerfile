@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies (ADK + MCP + gateway deps)
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir google-adk mcp cryptography PyJWT google-cloud-firestore google-cloud-secret-manager uvicorn httpx fastapi pydantic
+RUN pip install --no-cache-dir google-adk mcp cryptography PyJWT google-cloud-firestore google-cloud-secret-manager web3 eth-account uvicorn httpx fastapi pydantic
 
 # Copy source
 COPY gateway/ gateway/

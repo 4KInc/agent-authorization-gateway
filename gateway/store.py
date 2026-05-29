@@ -48,6 +48,15 @@ class ReceiptStore(ABC):
     @abstractmethod
     async def get_rate_limits(self, tenant: str) -> dict | None: ...
 
+    @abstractmethod
+    async def save_anchor_record(self, tenant: str, record: dict) -> None: ...
+
+    @abstractmethod
+    async def list_anchor_records(self, tenant: str) -> list[dict]: ...
+
+    @abstractmethod
+    async def get_anchor_record(self, tenant: str, tx_hash: str) -> dict | None: ...
+
 
 class InMemoryStore(ReceiptStore):
     """In-memory receipt store for local development and testing."""
@@ -95,6 +104,21 @@ class InMemoryStore(ReceiptStore):
 
     async def get_rate_limits(self, tenant: str) -> dict | None:
         return self._stats.get(f"{tenant}:rate_limits")
+
+    async def save_anchor_record(self, tenant: str, record: dict) -> None:
+        key = f"{tenant}:anchors"
+        if key not in self._stats:
+            self._stats[key] = []
+        self._stats[key].append(record)
+
+    async def list_anchor_records(self, tenant: str) -> list[dict]:
+        return list(reversed(self._stats.get(f"{tenant}:anchors", [])))
+
+    async def get_anchor_record(self, tenant: str, tx_hash: str) -> dict | None:
+        for r in self._stats.get(f"{tenant}:anchors", []):
+            if r.get("tx_hash") == tx_hash:
+                return r
+        return None
 
 
 class FirestoreStore(ReceiptStore):
@@ -168,6 +192,29 @@ class FirestoreStore(ReceiptStore):
     async def get_rate_limits(self, tenant: str) -> dict | None:
         doc_ref = self._db.collection("tenants").document(tenant) \
             .collection("metadata").document("rate_limits")
+        doc = await doc_ref.get()
+        return doc.to_dict() if doc.exists else None
+
+    async def save_anchor_record(self, tenant: str, record: dict) -> None:
+        tx_hash = record.get("tx_hash", "unknown")
+        doc_id = tx_hash.replace("0x", "")[:24] if tx_hash.startswith("0x") else tx_hash[:24]
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("anchors").document(doc_id)
+        await doc_ref.set(record)
+
+    async def list_anchor_records(self, tenant: str) -> list[dict]:
+        collection_ref = self._db.collection("tenants").document(tenant) \
+            .collection("anchors")
+        docs = collection_ref.order_by("block_number", direction="DESCENDING").limit(50).stream()
+        records = []
+        async for doc in docs:
+            records.append(doc.to_dict())
+        return records
+
+    async def get_anchor_record(self, tenant: str, tx_hash: str) -> dict | None:
+        doc_id = tx_hash.replace("0x", "")[:24] if tx_hash.startswith("0x") else tx_hash[:24]
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("anchors").document(doc_id)
         doc = await doc_ref.get()
         return doc.to_dict() if doc.exists else None
 

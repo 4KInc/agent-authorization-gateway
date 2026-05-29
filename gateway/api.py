@@ -175,7 +175,21 @@ async def lifespan(app: FastAPI):
         await check_chain_kid_consistency(store, gateway.tenant, gateway._kid)
     except Exception as e:
         logger.warning(f"Startup self-check (non-fatal): {e}")
+
+    # Start Base L2 anchor scheduler if enabled (REST service only)
+    anchor_task = None
+    if os.environ.get("ANCHOR_TO_BASE", "").lower() == "true":
+        import asyncio
+        from .anchor_scheduler import anchor_loop
+        anchor_task = asyncio.create_task(anchor_loop(gateway, store))
+        logger.info("Base L2 anchor scheduler started")
+    else:
+        logger.info("Base L2 anchoring disabled (set ANCHOR_TO_BASE=true to enable)")
+
     yield
+
+    if anchor_task:
+        anchor_task.cancel()
 
 
 api_app = FastAPI(
@@ -561,11 +575,45 @@ async def list_agents():
 
 @api_app.get("/anchors")
 async def get_anchors():
-    """Get all Merkle root anchors for the tenant."""
+    """Get all on-chain anchor records (Base L2 mainnet).
+
+    Anonymous endpoint — anchoring is public by design.
+    Each record includes the BaseScan URL for independent verification.
+    """
     gateway = _get_gateway()
+    store = _get_store()
+    records = await store.list_anchor_records(gateway.tenant)
+    # Also include legacy local anchors
     anchor = _get_anchor()
-    anchors = await anchor.get_anchors(gateway.tenant)
-    return {"tenant": gateway.tenant, "anchors": anchors, "count": len(anchors)}
+    local_anchors = await anchor.get_anchors(gateway.tenant)
+    return {
+        "tenant": gateway.tenant,
+        "on_chain_anchors": records,
+        "local_anchors": local_anchors,
+        "on_chain_count": len(records),
+    }
+
+
+@api_app.get("/anchors/verify/{tx_hash}")
+async def verify_anchor(tx_hash: str):
+    """Independently verify an on-chain anchor by fetching the tx from Base.
+
+    Confirms the calldata of the Base transaction matches the stored
+    Merkle root. Anyone can replicate this check with a public Base RPC.
+    """
+    gateway = _get_gateway()
+    store = _get_store()
+
+    # Look up the stored record
+    record = await store.get_anchor_record(gateway.tenant, tx_hash)
+    expected_root = record.get("merkle_root") if record else None
+
+    try:
+        from .base_anchor import verify_anchor_on_chain
+        result = verify_anchor_on_chain(tx_hash, expected_root)
+        return result
+    except Exception as e:
+        raise HTTPException(502, f"Could not verify anchor on Base: {e}")
 
 
 @api_app.post("/tamper-test")
