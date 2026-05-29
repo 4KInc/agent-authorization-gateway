@@ -81,7 +81,7 @@
     <text x="1080" y="448" text-anchor="middle" font-size="11" fill="#64748b">DPoP identity verification</text>
     <text x="1080" y="462" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">In-memory (demo)</text>
   </g>
-  <line x1="900" y1="430" x2="960" y2="430" stroke="#7c3aed" stroke-width="1.5"/>
+  <line x1="900" y1="430" x2="960" y2="435" stroke="#7c3aed" stroke-width="1.5"/>
 
   <!-- Policy Engine -->
   <g filter="url(#shadow)">
@@ -89,7 +89,7 @@
     <text x="1080" y="507" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Policy Engine</text>
     <text x="1080" y="523" text-anchor="middle" font-size="11" fill="#64748b">Deterministic Python: allowlist, scope, rate limit</text>
   </g>
-  <line x1="900" y1="475" x2="960" y2="510" stroke="#0d9488" stroke-width="1.5"/>
+  <line x1="900" y1="475" x2="960" y2="505" stroke="#0d9488" stroke-width="1.5"/>
 
   <!-- Receipt Signer -->
   <g filter="url(#shadow)">
@@ -97,7 +97,7 @@
     <text x="1080" y="577" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Receipt Signer</text>
     <text x="1080" y="593" text-anchor="middle" font-size="11" fill="#64748b">Ed25519 + hash chain + token_jti binding</text>
   </g>
-  <line x1="900" y1="520" x2="960" y2="580" stroke="#0d9488" stroke-width="1.5"/>
+  <line x1="900" y1="520" x2="960" y2="575" stroke="#0d9488" stroke-width="1.5"/>
 
   <!-- Token Issuer -->
   <g filter="url(#shadow)">
@@ -105,7 +105,7 @@
     <text x="1080" y="647" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e293b">Token Issuer</text>
     <text x="1080" y="663" text-anchor="middle" font-size="11" fill="#64748b">Ed25519 JWT (EdDSA), 60s TTL, action-bound</text>
   </g>
-  <line x1="900" y1="565" x2="960" y2="650" stroke="#0d9488" stroke-width="1.5"/>
+  <line x1="900" y1="565" x2="960" y2="645" stroke="#0d9488" stroke-width="1.5"/>
 
   <!-- Verification API -->
   <g filter="url(#shadow)">
@@ -115,20 +115,19 @@
     <text x="190" y="508" text-anchor="middle" font-size="11" fill="#64748b">Independent. Public key only.</text>
   </g>
 
-  <!-- ADK → Verification API (L-shape: down then across) -->
-  <polyline points="1320,280 1320,490 320,490" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="6,4"/>
-  <text x="820" y="483" text-anchor="middle" font-size="11" fill="#475569">read-only queries</text>
+  <!-- ADK → Verification API -->
+  <line x1="1240" y1="260" x2="320" y2="470" stroke="#475569" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="760" y="335" text-anchor="middle" font-size="11" fill="#475569">read-only queries</text>
 
-  <!-- Worker → Gateway (outgoing, offset up) -->
-  <line x1="360" y1="240" x2="480" y2="350" stroke="#ea580c" stroke-width="2.5"/>
-  <text x="450" y="280" text-anchor="middle" font-size="11" fill="#ea580c">intent + DPoP proof</text>
-  <!-- "via MCP" badge at midpoint of arrow, clear space -->
-  <rect x="380" y="295" width="70" height="18" rx="9" fill="#ea580c"/>
-  <text x="415" y="308" text-anchor="middle" font-size="10" font-weight="bold" fill="white">via MCP</text>
+  <!-- Worker → Gateway -->
+  <line x1="360" y1="250" x2="480" y2="340" stroke="#ea580c" stroke-width="2.5"/>
+  <rect x="370" y="288" width="90" height="20" rx="10" fill="#ea580c"/>
+  <text x="415" y="302" text-anchor="middle" font-size="11" font-weight="bold" fill="white">via MCP</text>
+  <text x="310" y="310" text-anchor="middle" font-size="11" fill="#ea580c">intent + DPoP proof</text>
 
-  <!-- Gateway → Worker (return, offset down) -->
-  <line x1="450" y1="360" x2="330" y2="260" stroke="#0d9488" stroke-width="2"/>
-  <text x="420" y="330" text-anchor="middle" font-size="11" fill="#0d9488">receipt + token</text>
+  <!-- Gateway → Worker -->
+  <line x1="440" y1="340" x2="310" y2="260" stroke="#0d9488" stroke-width="2"/>
+  <text x="330" y="326" text-anchor="middle" font-size="11" fill="#0d9488">receipt + token</text>
 
   <!-- ============ PROTECTED RESOURCE ============ -->
   <g filter="url(#shadow)">
@@ -146,13 +145,13 @@
     <text x="1300" y="572" font-size="11" fill="#64748b">No shared secret needed</text>
   </g>
 
-  <!-- Worker → Resource (routed ABOVE Gateway Service) -->
-  <polyline points="360,180 360,120 1410,120 1410,380" fill="none" stroke="#dc2626" stroke-width="2"/>
-  <text x="880" y="112" text-anchor="middle" font-size="11" fill="#dc2626">(5) use Ed25519 token (60s, single-use, action-bound)</text>
+  <!-- Worker → Resource -->
+  <line x1="260" y1="280" x2="1280" y2="440" stroke="#dc2626" stroke-width="2"/>
+  <text x="760" y="370" text-anchor="middle" font-size="11" fill="#dc2626">(5) use Ed25519 token (60s, single-use, action-bound)</text>
 
-  <!-- Resource → Gateway /keys (routed BELOW Gateway Service) -->
-  <polyline points="1280,570 1280,710 900,710 900,670" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,4"/>
-  <text x="1090" y="702" text-anchor="middle" font-size="11" fill="#94a3b8">fetch /keys</text>
+  <!-- Resource → Gateway /keys -->
+  <line x1="1280" y1="570" x2="900" y2="580" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="1100" y="590" text-anchor="middle" font-size="11" fill="#94a3b8">fetch /keys</text>
 
   <!-- ============ BAND 3: STORAGE ============ -->
 
