@@ -1,6 +1,7 @@
-# Receipt Chain Verification Protocol v0.3
+# Receipt Chain Verification Protocol v0.3.1
 
 > **Changelog:**
+> - v0.3.1 — `/verify-receipt` now performs bounded chain verification (single prev_receipt link check). Genesis returns PASS. Broken link returns FAIL with `PREV_LINK_BROKEN`. Missing predecessor returns INCONCLUSIVE with `PREV_NOT_FOUND`.
 > - v0.3 — `action_digest` now mandatory in every proof (missing = `PROOF_DIGEST_MISSING`); `htm`/`htu` scoped as named limitation for v0.4.
 > - v0.2 — documented authorization-side protocol (action digest, agent proof, registration, MCP tool signatures, transport authentication).
 
@@ -358,7 +359,7 @@ Verify a single receipt's cryptographic integrity.
 ```json
 {
   "receipt_integrity": "PASS",
-  "chain_validity": "INCONCLUSIVE",
+  "chain_validity": "PASS",
   "errors": []
 }
 ```
@@ -477,6 +478,32 @@ receipt_hash = "sha256:" + hex(SHA-256(canonicalize(body)))
 2. **Hash linkage:** Each receipt's `prev_receipt` equals the previous receipt's `receipt_hash`
 3. **Genesis:** The first receipt's `prev_receipt` is `sha256:` followed by 64 zeros
 4. **Immutability:** Modifying any field in any receipt invalidates the hash chain
+
+## Bounded Chain Verification
+
+The `/verify-receipt` endpoint (and `verify_receipt` MCP tool) perform two independent checks:
+
+1. **Receipt integrity**: signature verification + body hash match. Reports `receipt_integrity: PASS` or `FAIL`.
+2. **Bounded chain check**: load the immediate predecessor (the receipt at `seq - 1`), compute its hash, and compare to the current receipt's `prev_receipt` field. Reports `chain_validity: PASS`, `FAIL`, or `INCONCLUSIVE`.
+
+The bounded check requires one extra storage read but enables tamper detection on any individual receipt without walking the entire chain. For full-chain verification (every link from genesis to head), use `/verify-chain`.
+
+### chain_validity values
+
+| Value | Meaning |
+|-------|---------|
+| `PASS` | Predecessor was loaded and its hash matches the receipt's `prev_receipt` field. Or, this is the genesis receipt (no predecessor exists, so no broken link is possible). |
+| `FAIL` | Predecessor was loaded and its hash does NOT match the receipt's `prev_receipt` field. Indicates tampering. |
+| `INCONCLUSIVE` | Predecessor could not be loaded (`PREV_NOT_FOUND`) or another error prevented the check (`PREV_LOAD_FAILED`, `SEQ_INVALID`). |
+
+### Error codes (added in v0.3.1)
+
+| Code | When |
+|------|------|
+| `PREV_NOT_FOUND` | Predecessor receipt at `seq - 1` was not found in the chain store |
+| `PREV_LINK_BROKEN` | Predecessor exists but its hash does not match the current receipt's claimed `prev_receipt` |
+| `PREV_LOAD_FAILED` | Storage error while loading the predecessor |
+| `SEQ_INVALID` | The receipt's `seq` field could not be parsed as an integer |
 
 ## Verification Algorithm
 

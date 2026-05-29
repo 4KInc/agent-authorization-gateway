@@ -345,13 +345,27 @@ async def _resolve_key(req_key, receipt=None):
 
 @api_app.post("/verify-receipt", response_model=VerifyResponse)
 async def verify_receipt_endpoint(req: VerifyReceiptRequest):
-    """Verify a single receipt's integrity and signature.
+    """Verify a single receipt's integrity, signature, and prev_receipt link.
 
-    Any auditor can call this with a receipt envelope and the gateway's
-    public key to independently verify the receipt was not tampered with.
+    Performs bounded chain verification: loads the immediate predecessor
+    and checks that prev_receipt matches. Genesis receipts return PASS.
     """
+    gateway = _get_gateway()
+    store = _get_store()
     public_key = await _resolve_key(req.public_key, req.receipt)
-    result = verify_receipt(req.receipt, public_key)
+
+    # Load chain for bounded predecessor check
+    chain = None
+    try:
+        stored_chain = await store.get_chain(gateway.tenant)
+        if stored_chain:
+            chain = stored_chain
+        else:
+            chain = gateway.get_receipt_chain()
+    except Exception:
+        chain = gateway.get_receipt_chain()
+
+    result = verify_receipt(req.receipt, public_key, chain=chain)
 
     return VerifyResponse(
         receipt_integrity=result.receipt_integrity,

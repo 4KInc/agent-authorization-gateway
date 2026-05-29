@@ -32,7 +32,11 @@ class VerificationResult:
         }
 
 
-def verify_receipt(envelope: dict, public_key_jwk: dict) -> VerificationResult:
+def verify_receipt(
+    envelope: dict,
+    public_key_jwk: dict,
+    chain: list[dict] | None = None,
+) -> VerificationResult:
     """Verify a single receipt envelope against a public key.
 
     Checks:
@@ -40,6 +44,11 @@ def verify_receipt(envelope: dict, public_key_jwk: dict) -> VerificationResult:
     2. Receipt hash matches SHA-256 of canonical body
     3. Ed25519 signature is valid
     4. kid matches the provided key
+    5. Bounded chain check: prev_receipt links to the actual predecessor
+
+    If `chain` is provided, the bounded chain check loads the predecessor
+    by seq and verifies the prev_receipt hash linkage. Genesis receipts
+    (prev_receipt = null hash) return chain_validity = PASS.
     """
     result = VerificationResult()
 
@@ -83,9 +92,10 @@ def verify_receipt(envelope: dict, public_key_jwk: dict) -> VerificationResult:
             "code": "RECEIPT_HASH_MISMATCH",
             "message": f"Computed {computed_hash}, claimed {claimed_hash}",
         })
-        return result
+        # Continue to bounded check — report both failures
 
     # Verify Ed25519 signature
+    sig_ok = True
     try:
         x_bytes = _base64url_decode(public_key_jwk["x"])
         public_key = Ed25519PublicKey.from_public_bytes(x_bytes)
@@ -94,13 +104,58 @@ def verify_receipt(envelope: dict, public_key_jwk: dict) -> VerificationResult:
     except InvalidSignature:
         result.receipt_integrity = "FAIL"
         result.errors.append({"code": "SIGNATURE_INVALID", "message": "Ed25519 signature verification failed"})
-        return result
+        sig_ok = False
     except Exception as e:
         result.receipt_integrity = "FAIL"
         result.errors.append({"code": "SIGNATURE_ERROR", "message": str(e)})
-        return result
+        sig_ok = False
 
-    result.receipt_integrity = "PASS"
+    if sig_ok and result.receipt_integrity != "FAIL":
+        result.receipt_integrity = "PASS"
+
+    # Bounded chain check: verify prev_receipt links to actual predecessor
+    prev_hash = body.get("prev_receipt", "")
+    if prev_hash == GENESIS_PREV_RECEIPT:
+        result.chain_validity = "PASS"
+    elif chain is not None:
+        try:
+            current_seq = int(body.get("seq", "0"))
+        except (ValueError, TypeError):
+            result.chain_validity = "INCONCLUSIVE"
+            result.errors.append({"code": "SEQ_INVALID", "message": f"Could not parse seq: {body.get('seq')}"})
+            return result
+
+        # Find predecessor by seq
+        prior = None
+        for r in chain:
+            r_body = r.get("body", {})
+            try:
+                if int(r_body.get("seq", "0")) == current_seq - 1:
+                    prior = r
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        if prior is None:
+            result.chain_validity = "INCONCLUSIVE"
+            result.errors.append({
+                "code": "PREV_NOT_FOUND",
+                "message": f"Predecessor receipt at seq={current_seq - 1} not found in chain store",
+            })
+        elif prior.get("receipt_hash") == prev_hash:
+            result.chain_validity = "PASS"
+        else:
+            result.chain_validity = "FAIL"
+            result.errors.append({
+                "code": "PREV_LINK_BROKEN",
+                "message": (
+                    f"Receipt claims prev_receipt={prev_hash[:30]}... but "
+                    f"predecessor at seq={current_seq - 1} has hash "
+                    f"{prior.get('receipt_hash', '?')[:30]}..."
+                ),
+            })
+    # else: no chain provided, chain_validity stays INCONCLUSIVE
+
     return result
 
 

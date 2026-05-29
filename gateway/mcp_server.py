@@ -187,7 +187,8 @@ def verify_receipt(receipt_json: str) -> str:
         return json.dumps({"receipt_integrity": "FAIL", "errors": [{"code": "INVALID_JSON"}]})
 
     gateway = _get_gateway()
-    result = _verify(envelope, gateway.get_public_key_jwk())
+    chain = gateway.get_receipt_chain()
+    result = _verify(envelope, gateway.get_public_key_jwk(), chain=chain)
     return json.dumps(result.to_dict())
 
 
