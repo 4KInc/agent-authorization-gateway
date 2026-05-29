@@ -13,6 +13,7 @@ Runs alongside the ADK agent, providing direct HTTP access for:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
