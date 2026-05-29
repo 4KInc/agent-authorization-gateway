@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
         project_id=project_id,
         data_store_id=cfg["data_store_id"],
         location=cfg.get("data_store_location", "global"),
+        engine_id=cfg.get("engine_id"),
     )
     _state["agent"] = build_auditor_agent(
         _state["searcher"],

@@ -24,10 +24,11 @@ class ComplianceCitation:
 
 class ComplianceSearcher:
     def __init__(self, project_id: str, data_store_id: str,
-                 location: str = "global"):
+                 location: str = "global", engine_id: str | None = None):
         self.project_id = project_id
         self.data_store_id = data_store_id
         self.location = location
+        self.engine_id = engine_id
         self._client = None
 
     @property
@@ -41,11 +42,19 @@ class ComplianceSearcher:
         """Search the compliance corpus. Returns extractive citations."""
         from google.cloud import discoveryengine_v1 as discoveryengine
 
-        serving_config = (
-            f"projects/{self.project_id}/locations/{self.location}"
-            f"/dataStores/{self.data_store_id}"
-            f"/servingConfigs/default_config"
-        )
+        if self.engine_id:
+            serving_config = (
+                f"projects/{self.project_id}/locations/{self.location}"
+                f"/collections/default_collection"
+                f"/engines/{self.engine_id}"
+                f"/servingConfigs/default_config"
+            )
+        else:
+            serving_config = (
+                f"projects/{self.project_id}/locations/{self.location}"
+                f"/dataStores/{self.data_store_id}"
+                f"/servingConfigs/default_config"
+            )
 
         content_search_spec = discoveryengine.SearchRequest.ContentSearchSpec(
             extractive_content_spec=(
