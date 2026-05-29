@@ -306,12 +306,15 @@ Get the gateway's Ed25519 signing public key as a JWK.
 {
   "kty": "OKP",
   "crv": "Ed25519",
-  "kid": "gateway-hackathon-demo-0a9e7beb",
+  "kid": "<gateway-kid>",
   "use": "sig",
   "alg": "EdDSA",
-  "x": "wXy3rUSosmqX8HVqBYoM1MxLNnHecokzL4OIOd7lk4I"
+  "x": "<base64url-encoded public key, no padding>"
 }
 ```
+
+> The actual values are deployment-specific. Fetch the live values from
+> `GET /keys` on a running gateway.
 
 ### `get_chain_stats`
 

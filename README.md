@@ -72,9 +72,9 @@ If an agent is compromised or hallucinates a dangerous action, existing framewor
 
  Cloud Run Services:
  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
- │ REST API +       │ │ MCP Server       │ │ ADK Chat Agent   │
- │ Dashboard        │ │ (authorize,      │ │ (read-only tools │
- │ (all endpoints)  │ │  verify, keys)   │ │  blast radius)   │
+ │ REST API         │ │ MCP Server       │ │ ADK Chat Agent   │
+ │ (OpenAPI at      │ │ (authorize,      │ │ (read-only tools │
+ │  /docs)          │ │  verify, keys)   │ │  blast radius)   │
  └──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
@@ -117,7 +117,7 @@ cp .env.example .env  # add GOOGLE_API_KEY for ADK agent
 ### Run locally
 
 ```bash
-python serve.py           # REST API + Dashboard → http://localhost:8080
+python serve.py           # REST API → http://localhost:8080/docs
 
 # MCP server requires transport auth (bearer token or IAM)
 export MCP_AUTH_MODE=bearer
@@ -132,7 +132,7 @@ adk web authorization_gateway  # ADK chat → http://localhost:8000
 ### Run tests
 
 ```bash
-pytest tests/ -v   # 107 tests
+pytest tests/ -v   # 127 tests (124 + 3 kid-drift regression guards)
 ```
 
 ### Run the full demo
@@ -142,6 +142,43 @@ pytest tests/ -v   # 107 tests
 ```
 
 ### Deploy to Cloud Run
+
+### Set up the shared signing key (one-time per project)
+
+All gateway services load a single Ed25519 signing key from Secret Manager
+at startup. Create it once per GCP project:
+
+```bash
+# Generate an Ed25519 keypair and store the private key + kid as JSON
+python -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+import json, secrets
+k = Ed25519PrivateKey.generate()
+pem = k.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+).decode()
+kid = 'gateway-' + secrets.token_hex(4)
+print(json.dumps({'kid': kid, 'private_pem': pem}))
+" > /tmp/signing-key.json
+
+gcloud secrets create gateway-signing-key --replication-policy=automatic
+gcloud secrets versions add gateway-signing-key --data-file=/tmp/signing-key.json
+rm /tmp/signing-key.json   # delete after upload
+
+# Grant the Cloud Run runtime service account access
+gcloud secrets add-iam-policy-binding gateway-signing-key \
+  --member="serviceAccount:<runtime-sa>" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+See [SECURITY.md](SECURITY.md) for the full key architecture rationale.
+
+### Deploy the services
+
+Now build and deploy the three Cloud Run services:
 
 ```bash
 gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT/repo/image:latest
@@ -163,7 +200,7 @@ gcloud run deploy agent-auth-gateway-mcp --image ... --allow-unauthenticated \
 The demo proves three things:
 
 1. **Compliant Worker:** Registers identity → authorizes via MCP → uses token → action succeeds
-2. **Rogue Worker:** 4 attacks (no token, forged, expired, wrong-action) → all blocked with specific 401 codes
+2. **Rogue Worker:** 6 attacks (no token, self-forged token, expired token, wrong-action token, anonymous authorize without DPoP, unregistered agent DPoP) → all blocked with specific error codes
 3. **Tamper Detection:** Modify a stored receipt → chain verification detects the exact receipt and field
 
 Run `./examples/demo/run_demo.sh` to see the full demo locally.
@@ -173,7 +210,7 @@ Run `./examples/demo/run_demo.sh` to see the full demo locally.
 | Service | URL |
 |---------|-----|
 | **Interactive Demo UI** | **https://agent-auth-demo-ui-1031148889398.us-central1.run.app** |
-| REST API + Dashboard | https://agent-auth-gateway-1031148889398.us-central1.run.app |
+| REST API (Swagger at /docs) | https://agent-auth-gateway-1031148889398.us-central1.run.app |
 | MCP Server | https://agent-auth-gateway-mcp-1031148889398.us-central1.run.app/mcp |
 | ADK Chat Agent | https://agent-auth-gateway-adk-1031148889398.us-central1.run.app |
 | Protected Resource | https://agent-auth-gateway-resource-1031148889398.us-central1.run.app |
