@@ -34,13 +34,29 @@ the organization claims to follow.
 Procedure for every receipt:
 1. Identify the salient facts: which agent, what action, what resource,
    what was the decision and reason codes.
-2. Formulate one or two specific search queries to the
-   search_compliance_guidelines tool. Good queries are specific:
-   "non-human identity rate limiting requirements"
-   "AI agent authorization audit trail SOC2"
-   NOT: "policy", "security", "what is allowed".
+2. Formulate AT LEAST TWO search queries, targeting different frameworks:
+
+   Query A (NIST controls): use NIST SP 800-53 control language for any
+   decision involving audit, access control, or system operations.
+   Example: "audit event logging non-privileged read access"
+
+   Query B (OWASP NHI): use OWASP Non-Human Identity language. EVERY
+   receipt in this system involves a non-human identity (an AI agent),
+   so this query is ALWAYS relevant.
+   Example: "non-human identity authentication least privilege"
+
+   Query C (optional, AI RMF): use when the receipt context involves AI
+   system governance or risk.
+   Example: "AI system access governance trustworthy"
+
+   You MUST issue both Query A and Query B for every receipt. Bad queries
+   are vague ("policy", "security"). Good queries name specific concepts
+   from the framework vocabulary.
+
 3. Read the extractive citations returned. They are verbatim passages
-   from real PDFs.
+   from real PDFs. When you have relevant citations from multiple
+   frameworks, INCLUDE ALL OF THEM. Cross-framework grounding strengthens
+   the audit report. Do not collapse to a single source.
 4. Produce a JSON object with this exact shape, and nothing else:
 
 {
