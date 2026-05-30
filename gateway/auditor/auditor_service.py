@@ -71,12 +71,48 @@ async def lifespan(app: FastAPI):
             logger.warning("Pub/Sub publisher init failed; CONFLICT notifications disabled")
 
     load_auditor_key()
+
+    # Initialize A2A executor with the shared Firestore client
+    if _a2a_executor is not None:
+        _a2a_executor._db = _state["db"]
+        logger.info("A2A executor connected to Firestore")
+
     logger.info("Auditor service ready. data_store=%s model=%s",
                 cfg["data_store_id"], cfg.get("model"))
     yield
 
 
+# Create A2A executor at module level so routes can reference it;
+# its _db is set later in the lifespan when Firestore is ready.
+_a2a_executor = None
+try:
+    from .a2a_server import create_agent_card
+    from .a2a_executor import AuditorA2AExecutor
+    _a2a_executor = AuditorA2AExecutor()
+except ImportError:
+    pass
+
 app = FastAPI(title="Policy Auditor Agent", lifespan=lifespan)
+
+if _a2a_executor is not None:
+    from a2a.server.request_handlers import DefaultRequestHandlerV2
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes, create_rest_routes
+    from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
+
+    _a2a_card = create_agent_card()
+    _a2a_handler = DefaultRequestHandlerV2(
+        agent_executor=_a2a_executor,
+        task_store=InMemoryTaskStore(),
+        agent_card=_a2a_card,
+    )
+    add_a2a_routes_to_fastapi(
+        app,
+        agent_card_routes=create_agent_card_routes(_a2a_card),
+        jsonrpc_routes=create_jsonrpc_routes(_a2a_handler, rpc_url="/a2a"),
+        rest_routes=create_rest_routes(_a2a_handler),
+    )
+    logger.info("A2A routes mounted on Auditor REST service")
 
 
 @app.get("/health")
@@ -156,6 +192,56 @@ def audit_tick():
 
     logger.info("audit-tick summary: %s", summary)
     return summary
+
+
+@app.post("/audit-receipt")
+def audit_single_receipt(body: dict = {}):
+    """On-demand audit of a single receipt by seq number."""
+    from .receipt_reader import ReceiptReader
+    from .auditor_agent import audit_receipt
+    from .report_writer import write_audit_report
+
+    tenant = body.get("tenant", "default")
+    receipt_seq = body.get("receipt_seq")
+    if receipt_seq is None:
+        raise HTTPException(400, "receipt_seq is required")
+
+    db = _state["db"]
+    agent = _state["agent"]
+    reader = ReceiptReader(db)
+
+    # Find the specific receipt
+    all_receipts = reader.fetch_unaudited(tenant, max_batch=9999)
+    # Also check already-audited receipts
+    collection = db.collection("tenants").document(tenant).collection("receipts")
+    target = None
+    for doc in collection.stream():
+        data = doc.to_dict()
+        b = data.get("body", {})
+        try:
+            if int(b.get("seq", -1)) == int(receipt_seq):
+                flat = {**b}
+                meta = data.get("_meta", {})
+                flat.update(meta)
+                flat["receipt_hash"] = data.get("receipt_hash", "")
+                target = flat
+                break
+        except (ValueError, TypeError):
+            continue
+
+    if target is None:
+        raise HTTPException(404, f"Receipt seq={receipt_seq} not found for tenant={tenant}")
+
+    try:
+        verdict, rationale, citations = audit_receipt(agent, target)
+        envelope = write_audit_report(
+            db=db, tenant=tenant, receipt=target,
+            verdict=verdict, rationale=rationale, citations=citations,
+        )
+        return envelope
+    except Exception as e:
+        logger.exception("On-demand audit failed for seq=%s", receipt_seq)
+        raise HTTPException(500, f"Audit failed: {e}")
 
 
 @app.get("/audit-reports")

@@ -47,11 +47,47 @@ async def lifespan(app: FastAPI):
     _state["default_tenant"] = cfg.get("default_tenant", "default")
 
     load_recommender_key()
+
+    # Initialize A2A executor with the shared Firestore client
+    if _a2a_executor is not None:
+        _a2a_executor._db = _state["db"]
+        logger.info("A2A executor connected to Firestore")
+
     logger.info("Recommender service ready. model=%s", _state["model"])
     yield
 
 
+# Create A2A executor at module level so routes can reference it;
+# its _db is set later in the lifespan when Firestore is ready.
+_a2a_executor = None
+try:
+    from .a2a_server import create_agent_card
+    from .a2a_executor import RecommenderA2AExecutor
+    _a2a_executor = RecommenderA2AExecutor()
+except ImportError:
+    pass
+
 app = FastAPI(title="Policy Recommendation Agent", lifespan=lifespan)
+
+if _a2a_executor is not None:
+    from a2a.server.request_handlers import DefaultRequestHandlerV2
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes, create_rest_routes
+    from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
+
+    _a2a_card = create_agent_card()
+    _a2a_handler = DefaultRequestHandlerV2(
+        agent_executor=_a2a_executor,
+        task_store=InMemoryTaskStore(),
+        agent_card=_a2a_card,
+    )
+    add_a2a_routes_to_fastapi(
+        app,
+        agent_card_routes=create_agent_card_routes(_a2a_card),
+        jsonrpc_routes=create_jsonrpc_routes(_a2a_handler, rpc_url="/a2a"),
+        rest_routes=create_rest_routes(_a2a_handler),
+    )
+    logger.info("A2A routes mounted on Recommender REST service")
 
 
 @app.get("/health")
@@ -114,6 +150,31 @@ def recommend_tick():
 
     logger.info("recommend-tick summary: %s", summary)
     return summary
+
+
+@app.post("/analyze-patterns")
+def analyze_patterns(body: dict = {}):
+    """On-demand pattern analysis — same as recommend-tick but for a specific tenant."""
+    from .recommender_agent import build_recommender_agent, run_recommender
+
+    tenant = body.get("tenant", _state["default_tenant"])
+    window_hours = body.get("window_hours", 24)
+
+    db = _state["db"]
+    model = _state["model"]
+
+    try:
+        agent = build_recommender_agent(db, tenant, model=model)
+        raw_proposals = run_recommender(agent)
+        return {
+            "tenant": tenant,
+            "window_hours": window_hours,
+            "proposals_found": len(raw_proposals),
+            "proposals": raw_proposals,
+        }
+    except Exception as e:
+        logger.exception("On-demand analysis failed for tenant %s", tenant)
+        return {"error": str(e), "tenant": tenant}
 
 
 @app.get("/proposals")
