@@ -58,6 +58,18 @@ async def lifespan(app: FastAPI):
     )
     _state["max_per_tick"] = int(os.environ.get("MAX_PER_TICK", "10"))
 
+    # Pub/Sub publisher for CONFLICT notifications to the Investigator
+    _state["pubsub_publisher"] = None
+    _state["conflict_topic"] = None
+    if project_id:
+        try:
+            from google.cloud import pubsub_v1
+            _state["pubsub_publisher"] = pubsub_v1.PublisherClient()
+            _state["conflict_topic"] = f"projects/{project_id}/topics/auditor-conflicts"
+            logger.info("Pub/Sub publisher ready: topic=%s", _state["conflict_topic"])
+        except Exception:
+            logger.warning("Pub/Sub publisher init failed; CONFLICT notifications disabled")
+
     load_auditor_key()
     logger.info("Auditor service ready. data_store=%s model=%s",
                 cfg["data_store_id"], cfg.get("model"))
@@ -120,7 +132,7 @@ def audit_tick():
             decision = receipt.get("decision", "?")
             try:
                 verdict, rationale, citations = audit_receipt(agent, receipt)
-                write_audit_report(
+                envelope = write_audit_report(
                     db=db, tenant=tenant, receipt=receipt,
                     verdict=verdict, rationale=rationale, citations=citations,
                 )
@@ -128,6 +140,16 @@ def audit_tick():
                 summary["audited"] += 1
                 summary["by_verdict"][verdict] = summary["by_verdict"].get(verdict, 0) + 1
                 logger.info("Audited seq=%s decision=%s verdict=%s", seq, decision, verdict)
+
+                # Notify Investigator on CONFLICT verdicts
+                if verdict == "CONFLICT" and _state.get("pubsub_publisher"):
+                    try:
+                        audit_id = envelope["body"]["audit_id"]
+                        msg = json.dumps({"tenant": tenant, "audit_id": audit_id}).encode()
+                        _state["pubsub_publisher"].publish(_state["conflict_topic"], msg)
+                        logger.info("Published CONFLICT to Pub/Sub: audit_id=%s", audit_id)
+                    except Exception:
+                        logger.exception("Failed to publish CONFLICT to Pub/Sub")
             except Exception:
                 logger.exception("Audit failed for tenant=%s seq=%s", tenant, seq)
                 summary["errors"] += 1

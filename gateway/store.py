@@ -145,10 +145,12 @@ class FirestoreStore(ReceiptStore):
     async def get_chain(self, tenant: str) -> list[dict]:
         collection_ref = self._db.collection("tenants").document(tenant) \
             .collection("receipts")
-        docs = collection_ref.order_by("body.seq").stream()
+        docs = collection_ref.stream()
         receipts = []
         async for doc in docs:
             receipts.append(doc.to_dict())
+        # Sort numerically — seq is stored as string in the receipt body
+        receipts.sort(key=lambda r: int(r.get("body", {}).get("seq", "0") or "0"))
         return receipts
 
     async def save_keys(self, tenant: str, keys: dict) -> None:
