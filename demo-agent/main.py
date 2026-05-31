@@ -149,15 +149,21 @@ class RegisterSelfRequest(BaseModel):
 
 
 @app.post("/register-self")
+@app.post("/self-register")
 async def register_self(req: RegisterSelfRequest):
-    """Register this agent with the Gateway via the PoP flow."""
+    """Register this agent with the Gateway via the PoP flow.
+
+    Performs two-step challenge-response with the agent's own keypair,
+    including agent_card_url for existence verification.
+    """
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # Step 1: challenge
         ch_resp = await client.post(f"{GATEWAY_URL}/agents/register-challenge", json={"agent_id": AGENT_NAME})
+        if ch_resp.status_code != 200:
+            raise HTTPException(502, f"challenge failed: {ch_resp.status_code} {ch_resp.text}")
         ch = ch_resp.json()
 
-        # Step 2: sign and register
         iat = int(time.time())
+        card_url = f"{SERVICE_URL}/.well-known/agent-card.json" if SERVICE_URL else None
         msg = _jcs({
             "v": "1", "tenant_id": req.tenant, "agent_id": AGENT_NAME,
             "public_key": PUB_JWK, "nonce": ch["nonce"],
@@ -167,10 +173,21 @@ async def register_self(req: RegisterSelfRequest):
 
         reg_resp = await client.post(f"{GATEWAY_URL}/agents/register", json={
             "agent_id": AGENT_NAME, "public_key": PUB_JWK,
-            "agent_card_url": f"{SERVICE_URL}/.well-known/agent-card.json" if SERVICE_URL else None,
+            "agent_card_url": card_url,
             "proof": {"nonce": ch["nonce"], "challenge_id": ch["challenge_id"], "signature": sig, "iat": iat},
         })
-        return reg_resp.json()
+        if reg_resp.status_code != 200:
+            raise HTTPException(502, f"registration failed: {reg_resp.status_code} {reg_resp.text}")
+
+        result = reg_resp.json()
+        return {
+            "agent_id": AGENT_NAME,
+            "kid": result.get("kid"),
+            "proof_of_possession_at_registration": result.get("proof_of_possession_at_registration"),
+            "agent_card_verification": result.get("agent_card_verification"),
+            "agent_card_verification_reason": result.get("agent_card_verification_reason"),
+            "agent_card_url": card_url,
+        }
 
 
 if __name__ == "__main__":

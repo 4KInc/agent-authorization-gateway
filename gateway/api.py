@@ -590,8 +590,21 @@ async def _verify_agent_card(agent_card_url: str | None, declared_jwk: dict) -> 
     if not agent_card_url:
         return {"status": "skipped", "reason": "no agent_card_url provided"}
     try:
+        headers = {}
+        # Use Google identity token for Cloud Run service-to-service auth
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport.requests import Request
+            from urllib.parse import urlparse
+            # Cloud Run expects audience = base URL (no path)
+            parsed = urlparse(agent_card_url)
+            audience = f"{parsed.scheme}://{parsed.netloc}"
+            token = google_id_token.fetch_id_token(Request(), audience)
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception:
+            pass  # Fall back to unauthenticated if not on GCP
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(agent_card_url)
+            resp = await client.get(agent_card_url, headers=headers)
             if resp.status_code != 200:
                 return {"status": "failed", "reason": f"card URL returned {resp.status_code}"}
             card = resp.json()
@@ -720,8 +733,19 @@ async def _verify_resource_reachability(reachability_url: str | None) -> dict:
     if not reachability_url:
         return {"status": "skipped", "reason": "no reachability_url provided"}
     try:
+        headers = {}
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport.requests import Request
+            from urllib.parse import urlparse
+            parsed = urlparse(reachability_url)
+            audience = f"{parsed.scheme}://{parsed.netloc}"
+            token = google_id_token.fetch_id_token(Request(), audience)
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception:
+            pass
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(reachability_url)
+            resp = await client.get(reachability_url, headers=headers)
             if resp.status_code != 200:
                 return {"status": "failed", "reason": f"returned {resp.status_code}"}
             return {"status": "verified", "reason": "reachability endpoint returned 200 OK"}
