@@ -352,7 +352,12 @@ pub = key.public_key().public_bytes_raw()
 x = base64.urlsafe_b64encode(pub).rstrip(b'=').decode()
 jwk = {'kty': 'OKP', 'crv': 'Ed25519', 'x': x}
 c = httpx.Client(timeout=30)
-print('Register:', c.post(f'{GATEWAY_URL}/agents/register', json={'agent_id': 'smoke-test', 'public_key': jwk}).status_code)
+import time
+ch = c.post(f'{GATEWAY_URL}/agents/register-challenge', json={'agent_id': 'smoke-test'}).json()
+iat = int(time.time())
+msg = json.dumps({'v':'1','tenant_id':'hackathon-demo','agent_id':'smoke-test','public_key':jwk,'nonce':ch['nonce'],'challenge_id':ch['challenge_id'],'iat':iat}, separators=(',',':'), sort_keys=True).encode()
+sig = base64.urlsafe_b64encode(key.sign(msg)).rstrip(b'=').decode()
+print('Register:', c.post(f'{GATEWAY_URL}/agents/register', json={'agent_id': 'smoke-test', 'public_key': jwk, 'proof': {'nonce': ch['nonce'], 'challenge_id': ch['challenge_id'], 'signature': sig, 'iat': iat}}).status_code)
 "
 ```
 

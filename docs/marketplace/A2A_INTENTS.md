@@ -303,7 +303,7 @@ Freshness window: 30 seconds. JTI replay prevention: in-memory cache per gateway
 
 Agents that interoperate with Gate must:
 
-1. **Generate an Ed25519 keypair** (one-time) and register the public key with the Gateway via `register_agent` (MCP) or `POST /agents/register` (REST).
+1. **Generate an Ed25519 keypair** (one-time) and register the public key with the Gateway via `register_agent` (MCP) or the two-step `POST /agents/register-challenge` + `POST /agents/register` flow (REST). REST registration requires proof of possession — the registrant must sign a challenge nonce with the corresponding private key.
 2. **Produce DPoP proofs** per the profile documented in [docs/protocol.md](../protocol.md) for every `authorize_action` call. The `action_digest` must be computed using RFC 8785 JCS canonicalization.
 3. **Verify Gate's signed responses** using Gate's published public keys from `/keys` or `get_public_key`.
 4. **Handle token error conditions:** expired (60-second TTL), wrong audience, action_digest mismatch, and replay (JTI reuse).

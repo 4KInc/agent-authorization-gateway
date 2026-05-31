@@ -10,7 +10,7 @@ Gate processes authorization metadata for enterprise AI agents. It stores signed
 
 | Category | Stored Where | Retention | Personal Data? | Notes |
 |---|---|---|---|---|
-| Agent registrations | Firestore (`tenants/{id}/metadata/agent_registry`) | Indefinite | No | Public keys and opaque agent_id strings |
+| Agent registrations | Firestore (`tenants/{id}/agent_registry/{agent_id}`) | Indefinite | No | Public keys, opaque agent_id strings, proof-of-possession flag |
 | Signed receipts | Firestore (`tenants/{id}/receipts/`) | Indefinite | No | Immutable, hash-chained. Deletion breaks chain integrity. |
 | Audit reports | Firestore (`tenants/{id}/audit_reports/`) | Indefinite | No | Signed by Auditor. Contains verbatim citations from public compliance PDFs. |
 | Policy proposals | Firestore (`tenants/{id}/policy_proposals/`) | Indefinite | No | Signed by Recommender. References audit_report_ids. |

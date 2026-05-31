@@ -25,7 +25,7 @@ RESOURCE_URL = os.environ.get("RESOURCE_URL", "http://localhost:8081")
 
 # For cross-action test, we need a real token from the gateway
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from gateway.identity import create_agent_proof
+from gateway.identity import create_agent_proof, build_registration_message
 
 
 def run():
@@ -136,10 +136,16 @@ def run():
         pub_bytes = agent_key.public_key().public_bytes_raw()
         jwk = {"kty": "OKP", "crv": "Ed25519", "x": base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()}
 
-        # Register and authorize
+        # Register with PoP and authorize
+        import time as _t
+        ch = client.post(f"{GATEWAY_URL}/agents/register-challenge", json={"agent_id": "rogue-crossaction"}).json()
+        iat = int(_t.time())
+        msg = build_registration_message("hackathon-demo", "rogue-crossaction", jwk, ch["nonce"], ch["challenge_id"], iat)
+        sig = agent_key.sign(msg)
+        sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
         client.post(f"{GATEWAY_URL}/agents/register", json={
-            "agent_id": "rogue-crossaction",
-            "public_key": jwk,
+            "agent_id": "rogue-crossaction", "public_key": jwk,
+            "proof": {"nonce": ch["nonce"], "challenge_id": ch["challenge_id"], "signature": sig_b64, "iat": iat},
         })
         proof = create_agent_proof(agent_key, "rogue-crossaction", "read", "staging-database")
         auth_resp = client.post(f"{GATEWAY_URL}/authorize", json={

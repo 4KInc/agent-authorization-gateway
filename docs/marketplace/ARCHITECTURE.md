@@ -73,7 +73,8 @@ See [docs/architecture.svg](../architecture.svg) for the full system diagram sho
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/authorize` | Evaluate action, sign receipt, issue token |
-| POST | `/agents/register` | Register an agent's Ed25519 public key |
+| POST | `/agents/register-challenge` | Get a registration challenge nonce (step 1/2) |
+| POST | `/agents/register` | Register with proof of possession (step 2/2) |
 | GET | `/keys` | Published gateway JWK (for offline verification) |
 | GET | `/chain` | Receipt chain summary |
 | POST | `/verify-receipt` | Verify a receipt's signature and chain linkage |
@@ -175,6 +176,16 @@ The Gateway exposes four independent surfaces. All four converge to the same `Ga
 | A2A Protocol | `agent-auth-gateway-a2a` | `https://agent-auth-gateway-a2a-...run.app` | OIDC + DPoP proof | Agent-to-agent interoperability (Google A2A SDK v1.1.0) |
 
 ## Data Flow
+
+### Agent Registration (Proof of Possession)
+
+Registration requires a two-step challenge-response proving the registrant controls the private key:
+
+1. **Agent requests challenge.** `POST /agents/register-challenge` returns a single-use nonce (60-second TTL).
+2. **Agent signs challenge.** The agent builds a canonical message binding the nonce, agent_id, and public key (JCS canonicalization), then signs it with the corresponding Ed25519 private key.
+3. **Agent registers with proof.** `POST /agents/register` with the public key and the signed proof. The Gateway verifies the signature against the submitted public key before accepting the registration.
+
+This prevents registering keys you don't control. All active registrations — including the five system agents — have verified proof of possession.
 
 ### Authorization Flow
 

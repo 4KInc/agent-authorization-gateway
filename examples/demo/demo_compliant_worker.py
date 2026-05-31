@@ -18,7 +18,7 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from gateway.identity import create_agent_proof
+from gateway.identity import create_agent_proof, build_registration_message
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 RESOURCE_URL = os.environ.get("RESOURCE_URL", "http://localhost:8081")
@@ -31,6 +31,21 @@ def make_jwk(private_key: Ed25519PrivateKey) -> dict:
     return {"kty": "OKP", "crv": "Ed25519", "x": x}
 
 
+def register_with_pop(client, gateway_url, agent_id, private_key, jwk, tenant="hackathon-demo"):
+    """Two-step challenge-response registration with proof of possession."""
+    import time as _t
+    ch = client.post(f"{gateway_url}/agents/register-challenge", json={"agent_id": agent_id}).json()
+    iat = int(_t.time())
+    msg = build_registration_message(tenant, agent_id, jwk, ch["nonce"], ch["challenge_id"], iat)
+    sig = private_key.sign(msg)
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    resp = client.post(f"{gateway_url}/agents/register", json={
+        "agent_id": agent_id, "public_key": jwk,
+        "proof": {"nonce": ch["nonce"], "challenge_id": ch["challenge_id"], "signature": sig_b64, "iat": iat},
+    })
+    return resp.json()
+
+
 def run():
     print("=" * 60)
     print("  COMPLIANT WORKER DEMO")
@@ -41,14 +56,10 @@ def run():
     jwk = make_jwk(agent_key)
 
     with httpx.Client(timeout=15) as client:
-        # Step 1: Register with Gateway
-        print(f"\n[1] Registering {AGENT_ID} with Gateway...")
-        resp = client.post(f"{GATEWAY_URL}/agents/register", json={
-            "agent_id": AGENT_ID,
-            "public_key": jwk,
-        })
-        reg = resp.json()
-        print(f"    Registered: kid={reg.get('kid', '?')}")
+        # Step 1: Register with Gateway (proof of possession)
+        print(f"\n[1] Registering {AGENT_ID} with Gateway (PoP)...")
+        reg = register_with_pop(client, GATEWAY_URL, AGENT_ID, agent_key, jwk)
+        print(f"    Registered: kid={reg.get('kid', '?')} pop={reg.get('proof_of_possession_at_registration', False)}")
 
         # Step 2: Authorize read_customer (should APPROVE)
         print(f"\n[2] Authorizing: read on staging-database...")

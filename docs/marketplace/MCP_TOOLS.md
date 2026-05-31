@@ -45,7 +45,7 @@ Evaluate an AI agent's intended action against a security policy. Returns an aut
 
 ### `gateway_register_agent`
 
-Register an agent's Ed25519 public key for identity verification. Must be called once before the first `gateway_authorize_action` call.
+Register an agent's Ed25519 public key for identity verification. Must be called once before the first `gateway_authorize_action` call. MCP registration is authenticated via transport-level bearer token; REST registration additionally requires proof of possession (challenge-response).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
