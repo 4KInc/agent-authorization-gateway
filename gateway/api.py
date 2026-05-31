@@ -638,7 +638,9 @@ class ResourceUpdateRequest(BaseModel):
 def _get_resource_registry():
     from .resources import ResourceRegistry
     gateway = _get_gateway()
-    if not hasattr(gateway, "_resource_registry") or gateway._resource_registry is None:
+    reg = getattr(gateway, "_resource_registry", None)
+    # Upgrade to Firestore-backed registry if not already
+    if reg is None or (reg._db is None and os.environ.get("FIRESTORE_ENABLED", "").lower() == "true"):
         firestore_db = None
         if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
             try:

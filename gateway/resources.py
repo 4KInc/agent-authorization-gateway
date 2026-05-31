@@ -203,23 +203,22 @@ class ResourceRegistry:
         cursor: str | None = None,
     ) -> tuple[list[dict], str | None]:
         if self._db:
-            query = self._collection().order_by("resource_id")
-            if cursor:
-                query = query.start_after({"resource_id": cursor})
-            # Fetch one extra to determine if there's a next page
-            docs = list(query.limit(limit + 1).stream())
-            results = []
-            for doc in docs[:limit]:
+            all_docs = []
+            for doc in self._collection().stream():
                 data = doc.to_dict()
                 if not include_revoked and data.get("status") != "active":
                     continue
-                results.append(data)
-            next_cursor = None
-            if len(docs) > limit:
-                results_from_all = [d.to_dict() for d in docs[:limit]]
-                if results_from_all:
-                    next_cursor = results_from_all[-1].get("resource_id")
-            return results, next_cursor
+                all_docs.append(data)
+            all_docs.sort(key=lambda r: r.get("resource_id", ""))
+            start = 0
+            if cursor:
+                for i, item in enumerate(all_docs):
+                    if item.get("resource_id") == cursor:
+                        start = i + 1
+                        break
+            page = all_docs[start:start + limit]
+            next_cursor = page[-1]["resource_id"] if len(all_docs) > start + limit else None
+            return page, next_cursor
 
         # In-memory fallback
         if not hasattr(self, "_memory"):

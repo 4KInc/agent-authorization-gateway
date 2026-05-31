@@ -67,17 +67,7 @@ class GatewayService:
         self.policy = policy or get_active_policy()
         self._policy_engine = PolicyEngine(self.policy)
         self._resource_registry = resource_registry or ResourceRegistry(tenant_id=tenant)
-        if registry:
-            self._registry = registry
-        else:
-            firestore_db = None
-            if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
-                try:
-                    from google.cloud import firestore
-                    firestore_db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
-                except Exception:
-                    pass
-            self._registry = AgentRegistry(tenant=tenant, firestore_db=firestore_db)
+        self._registry = registry or AgentRegistry()
 
         # Signing keypair: prefer explicitly provided (from Secret Manager),
         # fall back to loading from signing_key module, final fallback to
