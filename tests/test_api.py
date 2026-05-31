@@ -378,7 +378,7 @@ def test_resource_register():
         "resource_id": "test-api-resource",
         "display_name": "Test API Resource",
         "description": "Created by test_api.py",
-        "resource_type": "api",
+        "resource_type": "db",
     })
     assert resp.status_code == 200
     data = resp.json()
@@ -387,15 +387,15 @@ def test_resource_register():
 
 
 def test_resource_register_duplicate_409():
-    # First ensure it's registered
     client.post("/resources/register", json={
         "resource_id": "dup-resource",
         "display_name": "Dup Resource",
+        "resource_type": "db",
     })
-    # Try again
     resp = client.post("/resources/register", json={
         "resource_id": "dup-resource",
         "display_name": "Dup Resource",
+        "resource_type": "db",
     })
     assert resp.status_code == 409
 
@@ -404,14 +404,33 @@ def test_resource_register_invalid_id_400():
     resp = client.post("/resources/register", json={
         "resource_id": "bad id!",
         "display_name": "Bad",
+        "resource_type": "db",
     })
     assert resp.status_code == 400
+
+
+def test_resource_register_rejects_invalid_type():
+    resp = client.post("/resources/register", json={
+        "resource_id": "test-invalid-type",
+        "display_name": "Test",
+        "resource_type": "spaceship",
+    })
+    assert resp.status_code == 422
+
+
+def test_resource_register_rejects_missing_type():
+    resp = client.post("/resources/register", json={
+        "resource_id": "test-no-type",
+        "display_name": "Test",
+    })
+    assert resp.status_code == 422
 
 
 def test_resource_list():
     client.post("/resources/register", json={
         "resource_id": "list-test-resource",
         "display_name": "List Test",
+        "resource_type": "db",
     })
     resp = client.get("/resources")
     assert resp.status_code == 200
@@ -426,6 +445,7 @@ def test_resource_get():
     client.post("/resources/register", json={
         "resource_id": "get-test-resource",
         "display_name": "Get Test",
+        "resource_type": "db",
     })
     resp = client.get("/resources/get-test-resource")
     assert resp.status_code == 200
@@ -443,12 +463,12 @@ def test_resource_revoke():
     client.post("/resources/register", json={
         "resource_id": "revoke-test-resource",
         "display_name": "Revoke Test",
+        "resource_type": "db",
     })
     resp = client.delete("/resources/revoke-test-resource")
     assert resp.status_code == 200
     assert resp.json()["status"] == "revoked"
 
-    # Verify it's revoked
     get_resp = client.get("/resources/revoke-test-resource")
     assert get_resp.json()["status"] == "revoked"
 
@@ -462,6 +482,7 @@ def test_resource_update():
     client.post("/resources/register", json={
         "resource_id": "update-test-resource",
         "display_name": "Update Test",
+        "resource_type": "db",
     })
     resp = client.patch("/resources/update-test-resource", json={
         "display_name": "Updated Name",
@@ -480,6 +501,7 @@ def test_resource_hierarchical_id():
     resp = client.post("/resources/register", json={
         "resource_id": "gcp.cloudsql.staging/customers",
         "display_name": "GCP Staging Customers",
+        "resource_type": "db",
     })
     assert resp.status_code == 200
 

@@ -671,11 +671,18 @@ def _get_caller_identity(request) -> str:
 
 # --- Resource endpoints ---
 
+from enum import Enum
+
+class ResourceType(str, Enum):
+    DB = "db"
+    # Future: API = "api", STORAGE = "storage", QUEUE = "queue"
+
+
 class ResourceRegisterRequest(BaseModel):
     resource_id: str = Field(..., min_length=1, max_length=256)
     display_name: str = Field(..., min_length=1, max_length=256)
     description: str = ""
-    resource_type: str = ""
+    resource_type: ResourceType = Field(..., description="Resource type (e.g., db)")
     owner: str = ""
     metadata: dict | None = None
     reachability_url: str | None = Field(None, description="Optional URL for reachability verification")
@@ -684,7 +691,7 @@ class ResourceRegisterRequest(BaseModel):
 class ResourceUpdateRequest(BaseModel):
     display_name: str | None = None
     description: str | None = None
-    resource_type: str | None = None
+    resource_type: ResourceType | None = None
     owner: str | None = None
     metadata: dict | None = None
 
