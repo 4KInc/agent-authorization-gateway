@@ -50,6 +50,7 @@ AUDITOR_REST_URL = os.environ.get("AUDITOR_REST_URL", "")
 RECOMMENDER_REST_URL = os.environ.get("RECOMMENDER_REST_URL", "")
 INVESTIGATOR_REST_URL = os.environ.get("INVESTIGATOR_REST_URL", "")
 COORDINATOR_REST_URL = os.environ.get("COORDINATOR_REST_URL", "")
+GATEWAY_REST_URL = os.environ.get("GATEWAY_REST_URL", "")
 
 
 # --- Service-to-service HTTP helper ---
@@ -614,6 +615,228 @@ async def coordinator_register_known_agent(agent_card_url: str) -> str:
         COORDINATOR_REST_URL, "POST", "/discover",
         json_body={"agent_card_url": agent_card_url},
         timeout=60,
+    )
+    return json.dumps(result, default=str)
+
+
+# ============================================================================
+# ACTIONS REGISTRY TOOLS (HTTP calls to the Gateway REST API)
+# ============================================================================
+
+@mcp.tool()
+async def actions_query_actions(include_revoked: bool = False, limit: int = 100) -> str:
+    """Query the actions registry. Returns registered actions with their risk levels
+    and approval requirements.
+
+    Each action has:
+    - action_id: canonical identifier (e.g., "read", "delete", "admin")
+    - risk_level: low | medium | high | critical
+    - requires_human_approval: whether the action needs human-in-the-loop approval
+
+    Args:
+        include_revoked: Include revoked actions in results.
+        limit: Maximum number of actions to return.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", "/actions",
+        params={"include_revoked": str(include_revoked).lower(), "limit": limit},
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+async def actions_get_action(action_id: str) -> str:
+    """Get a specific registered action by ID, including its risk level,
+    human-approval requirement, and metadata.
+
+    Args:
+        action_id: The action identifier to look up.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", f"/actions/{action_id}",
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+async def actions_register_action(
+    action_id: str,
+    display_name: str,
+    risk_level: str,
+    description: str = "",
+    requires_human_approval: bool = False,
+    metadata: str = "{}",
+) -> str:
+    """Register a new action in the actions registry.
+
+    action_id: must match [a-zA-Z0-9._/-]{1,256}
+    risk_level: one of "low", "medium", "high", "critical"
+    requires_human_approval: if true, this action requires external
+        human-in-the-loop approval (informational in v0.5)
+
+    Args:
+        action_id: Canonical action identifier.
+        display_name: Human-readable name for dashboards.
+        risk_level: One of low, medium, high, critical.
+        description: Optional description of what this action does.
+        requires_human_approval: Whether human approval is required.
+        metadata: JSON string of additional key-value metadata.
+    """
+    if risk_level not in ("low", "medium", "high", "critical"):
+        return json.dumps({"error": f"invalid risk_level: {risk_level}", "valid_values": ["low", "medium", "high", "critical"]})
+
+    payload: dict = {
+        "action_id": action_id,
+        "display_name": display_name,
+        "description": description,
+        "risk_level": risk_level,
+        "requires_human_approval": requires_human_approval,
+    }
+    if metadata and metadata.strip() and metadata.strip() != "{}":
+        try:
+            payload["metadata"] = json.loads(metadata)
+        except json.JSONDecodeError:
+            pass
+
+    result = await _call_agent(
+        GATEWAY_REST_URL, "POST", "/actions/register",
+        json_body=payload,
+    )
+    return json.dumps(result, default=str)
+
+
+# ============================================================================
+# RESOURCE REGISTRY TOOLS (HTTP calls to the Gateway REST API)
+# ============================================================================
+
+@mcp.tool()
+async def resources_query_resources(
+    include_revoked: bool = False,
+    limit: int = 100,
+) -> str:
+    """Query the resource registry. Returns registered resources with their
+    type, owner, reachability status, and metadata.
+
+    Each resource includes:
+    - resource_id, display_name, description, owner
+    - resource_type: "db" (v0.5; enum is extensible)
+    - reachability_url, reachability_verification, reachability_verified_at
+    - status: active | revoked
+
+    Args:
+        include_revoked: Include revoked resources in results.
+        limit: Maximum number of resources to return.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", "/resources",
+        params={"include_revoked": str(include_revoked).lower(), "limit": limit},
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+async def resources_get_resource(resource_id: str) -> str:
+    """Get a specific registered resource by ID, including its type,
+    reachability verification status, and full metadata.
+
+    Args:
+        resource_id: The resource identifier to look up.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", f"/resources/{resource_id}",
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+async def resources_register_resource(
+    resource_id: str,
+    display_name: str,
+    resource_type: str,
+    description: str = "",
+    owner: str = "",
+    reachability_url: str = "",
+    metadata: str = "{}",
+) -> str:
+    """Register a new resource in the resource registry.
+
+    resource_id: must match [a-zA-Z0-9._/-]{1,256}
+    resource_type: must be "db" (v0.5 supports db only; enum is extensible)
+    reachability_url: optional URL the Gateway will probe at registration
+        time to verify the resource is reachable. Verification status is
+        recorded but does not block registration.
+
+    Args:
+        resource_id: Canonical resource identifier.
+        display_name: Human-readable name for dashboards.
+        resource_type: One of: db.
+        description: Optional description of this resource.
+        owner: Team or person identifier.
+        reachability_url: Optional URL for reachability verification.
+        metadata: JSON string of additional key-value metadata.
+    """
+    if resource_type not in ("db",):
+        return json.dumps({"error": f"invalid resource_type: {resource_type}", "valid_values": ["db"]})
+
+    payload: dict = {
+        "resource_id": resource_id,
+        "display_name": display_name,
+        "resource_type": resource_type,
+        "description": description,
+        "owner": owner,
+    }
+    if reachability_url:
+        payload["reachability_url"] = reachability_url
+    if metadata and metadata.strip() and metadata.strip() != "{}":
+        try:
+            payload["metadata"] = json.loads(metadata)
+        except json.JSONDecodeError:
+            pass
+
+    result = await _call_agent(
+        GATEWAY_REST_URL, "POST", "/resources/register",
+        json_body=payload,
+    )
+    return json.dumps(result, default=str)
+
+
+# ============================================================================
+# AGENT REGISTRY QUERY TOOLS (HTTP calls to the Gateway REST API)
+# Note: register_agent is deliberately excluded from MCP — PoP cannot
+# be enforced over bearer-token transport. See removal note above.
+# ============================================================================
+
+@mcp.tool()
+async def agents_query_agents(include_revoked: bool = False) -> str:
+    """Query the agent registry. Returns registered agents with their key IDs,
+    registration timestamps, and A2A card verification status.
+
+    Each agent includes:
+    - agent_id, kid, registered_at, registered_by, status
+    - agent_card_url: URL of the agent's A2A card (if provided at registration)
+    - agent_card_verification: verified | failed | skipped
+    - agent_card_verified_at: timestamp of last verification
+
+    Args:
+        include_revoked: Include revoked agents in results.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", "/agents",
+        params={"include_revoked": str(include_revoked).lower()},
+    )
+    return json.dumps(result, default=str)
+
+
+@mcp.tool()
+async def agents_get_agent(agent_id: str) -> str:
+    """Get a specific registered agent by ID, including its key ID,
+    A2A card verification status, and registration details.
+
+    Args:
+        agent_id: The agent identifier to look up.
+    """
+    result = await _call_agent(
+        GATEWAY_REST_URL, "GET", f"/agents/{agent_id}",
     )
     return json.dumps(result, default=str)
 
