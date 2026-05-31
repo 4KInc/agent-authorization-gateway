@@ -22,6 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+import httpx
+
 from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
 from .gateway_service import GatewayService
 from .store import ReceiptStore, create_store
@@ -580,11 +582,39 @@ class AgentRegisterRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=256)
     public_key: dict = Field(..., description="Agent's Ed25519 public key as JWK")
     proof: AgentRegisterProof = Field(..., description="Proof of possession")
+    agent_card_url: str | None = Field(None, description="Optional A2A agent card URL for existence verification")
+
+
+async def _verify_agent_card(agent_card_url: str | None, declared_jwk: dict) -> dict:
+    """Fetch the agent's A2A card and verify the declared public key matches."""
+    if not agent_card_url:
+        return {"status": "skipped", "reason": "no agent_card_url provided"}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(agent_card_url)
+            if resp.status_code != 200:
+                return {"status": "failed", "reason": f"card URL returned {resp.status_code}"}
+            card = resp.json()
+    except Exception as e:
+        return {"status": "failed", "reason": f"fetch error: {e}"}
+
+    card_key = card.get("signing_key") or card.get("public_key") or card.get("authentication", {}).get("signing_key")
+    if not card_key or not isinstance(card_key, dict):
+        return {"status": "failed", "reason": "card does not declare signing_key"}
+
+    if declared_jwk.get("x") != card_key.get("x"):
+        return {"status": "failed", "reason": "card public key does not match registered key"}
+
+    return {"status": "verified", "reason": "card public key matches registered key"}
 
 
 @api_app.post("/agents/register")
 async def register_agent(req: AgentRegisterRequest):
-    """Register with proof of possession (step 2 of 2). Replace semantics."""
+    """Register with proof of possession (step 2 of 2). Replace semantics.
+
+    Optionally verifies the agent's A2A card URL if provided. Verification
+    failure does NOT block registration — the status is recorded.
+    """
     gateway = _get_gateway()
     valid, err = verify_registration_proof(
         public_key_jwk=req.public_key,
@@ -596,6 +626,9 @@ async def register_agent(req: AgentRegisterRequest):
     if not valid:
         status = 401 if err == "INVALID_PROOF_SIGNATURE" else 400
         raise HTTPException(status, detail=err)
+
+    card_result = await _verify_agent_card(req.agent_card_url, req.public_key)
+
     try:
         agent = gateway._registry.register(req.agent_id, req.public_key)
         return {
@@ -603,6 +636,9 @@ async def register_agent(req: AgentRegisterRequest):
             "agent_id": agent.agent_id,
             "kid": agent.kid,
             "proof_of_possession_at_registration": True,
+            "agent_card_url": req.agent_card_url,
+            "agent_card_verification": card_result["status"],
+            "agent_card_verification_reason": card_result.get("reason"),
         }
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")
@@ -642,6 +678,7 @@ class ResourceRegisterRequest(BaseModel):
     resource_type: str = ""
     owner: str = ""
     metadata: dict | None = None
+    reachability_url: str | None = Field(None, description="Optional URL for reachability verification")
 
 
 class ResourceUpdateRequest(BaseModel):
@@ -671,12 +708,29 @@ def _get_resource_registry():
     return gateway._resource_registry
 
 
+async def _verify_resource_reachability(reachability_url: str | None) -> dict:
+    """Probe a resource's reachability endpoint."""
+    if not reachability_url:
+        return {"status": "skipped", "reason": "no reachability_url provided"}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(reachability_url)
+            if resp.status_code != 200:
+                return {"status": "failed", "reason": f"returned {resp.status_code}"}
+            return {"status": "verified", "reason": "reachability endpoint returned 200 OK"}
+    except Exception as e:
+        return {"status": "failed", "reason": f"fetch error: {e}"}
+
+
 @api_app.post("/resources/register")
 async def register_resource(req: ResourceRegisterRequest, request: Request):
-    """Register a resource in the tenant's resource registry."""
+    """Register a resource with optional reachability verification."""
     from .resources import ResourceConflict
     caller = _get_caller_identity(request)
     registry = _get_resource_registry()
+
+    reach_result = await _verify_resource_reachability(req.reachability_url)
+
     try:
         result = registry.register(
             resource_id=req.resource_id,
@@ -693,6 +747,9 @@ async def register_resource(req: ResourceRegisterRequest, request: Request):
             "display_name": result["display_name"],
             "version": result["version"],
             "registered_at": result["registered_at"],
+            "reachability_url": req.reachability_url,
+            "reachability_verification": reach_result["status"],
+            "reachability_verification_reason": reach_result.get("reason"),
         }
     except ResourceConflict as e:
         raise HTTPException(409, str(e))
