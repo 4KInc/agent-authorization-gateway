@@ -21,8 +21,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from .canonical import canonicalize
 from .identity import AgentRegistry, verify_agent_proof
 from .merkle import compute_batch_root
-from .policy import EvaluationResult, Policy, PolicyEngine, create_demo_policy
+from .policy import EvaluationResult, Policy, PolicyEngine, create_demo_policy, get_active_policy
 from .receipts import Receipt, ReceiptChain
+from .resources import ResourceRegistry
 from .tokens import compute_action_digest, issue_token
 
 logger = logging.getLogger("gateway.service")
@@ -58,13 +59,25 @@ class GatewayService:
         tenant: str = "default",
         policy: Policy | None = None,
         registry: AgentRegistry | None = None,
+        resource_registry: ResourceRegistry | None = None,
         private_key: Ed25519PrivateKey | None = None,
         kid: str | None = None,
     ):
         self.tenant = tenant
-        self.policy = policy or create_demo_policy()
+        self.policy = policy or get_active_policy()
         self._policy_engine = PolicyEngine(self.policy)
-        self._registry = registry or AgentRegistry()
+        self._resource_registry = resource_registry or ResourceRegistry(tenant_id=tenant)
+        if registry:
+            self._registry = registry
+        else:
+            firestore_db = None
+            if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+                try:
+                    from google.cloud import firestore as _fs
+                    firestore_db = _fs.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+                except Exception:
+                    pass
+            self._registry = AgentRegistry(tenant=tenant, firestore_db=firestore_db)
 
         # Signing keypair: prefer explicitly provided (from Secret Manager),
         # fall back to loading from signing_key module, final fallback to
@@ -139,7 +152,31 @@ class GatewayService:
         )
         logger.info(f"DPoP verified: agent={verified_agent.agent_id} kid={verified_agent.kid}")
 
-        # Step 1: Evaluate policy
+        # Step 1a: Check resource registration (if strict mode)
+        resource_registration_id = None
+        if self._resource_registry.is_registered_and_active(resource):
+            resource_registration_id = resource
+
+        if self.policy.require_resource_registration and resource_registration_id is None:
+            # Strict mode: unregistered resource is denied before policy evaluation
+            import uuid
+            receipt = self._receipt_chain.sign_decision(
+                request_digest=action_digest,
+                policy_version=self.policy.policy_hash(),
+                decision="deny",
+                reasons=["RESOURCE_NOT_REGISTERED"],
+                resource_registration_id=None,
+            )
+            return AuthorizationResponse(
+                decision="deny",
+                reason_codes=["RESOURCE_NOT_REGISTERED"],
+                token=None,
+                receipt=receipt.envelope_dict(),
+                action_digest=action_digest,
+                receipt_hash=receipt.receipt_hash,
+            )
+
+        # Step 1b: Evaluate policy
         result = self._policy_engine.evaluate(agent_id, action, resource, parameters)
 
         # Step 2: Generate token jti (single source of truth for approvals)
@@ -147,13 +184,14 @@ class GatewayService:
         token = None
         token_jti = str(uuid.uuid4()) if result.decision == "approve" else None
 
-        # Step 3: Sign receipt (includes token_jti binding)
+        # Step 3: Sign receipt (includes token_jti and resource_registration_id binding)
         receipt = self._receipt_chain.sign_decision(
             request_digest=action_digest,
             policy_version=self.policy.policy_hash(),
             decision=result.decision,
             reasons=result.reason_codes,
             token_jti=token_jti,
+            resource_registration_id=resource_registration_id,
         )
 
         # Step 4: Issue token once with the real receipt_hash and the same jti

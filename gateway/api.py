@@ -124,7 +124,11 @@ async def lifespan(app: FastAPI):
         if stored_policy and "rules" in stored_policy:
             from .policy import Policy, PolicyRule, PolicyEngine
             rules = [PolicyRule(id=r["id"], type=r["type"], config=r["config"]) for r in stored_policy["rules"]]
-            policy = Policy(rules=rules, version=stored_policy.get("version", "1"))
+            policy = Policy(
+                rules=rules,
+                version=stored_policy.get("version", "1"),
+                require_resource_registration=bool(stored_policy.get("require_resource_registration", False)),
+            )
             gateway.policy = policy
             gateway._policy_engine = PolicyEngine(policy)
             logger.info(f"Loaded policy from Firestore: {len(rules)} rules, hash={policy.policy_hash()[:24]}")
@@ -493,6 +497,7 @@ async def get_policy():
         "tenant": gateway.tenant,
         "version": gateway.policy.version,
         "policy_hash": gateway.policy.policy_hash(),
+        "require_resource_registration": gateway.policy.require_resource_registration,
         "rules": [
             {"id": r.id, "type": r.type, "config": r.config}
             for r in gateway.policy.rules
@@ -503,6 +508,7 @@ async def get_policy():
 class UpdatePolicyRequest(BaseModel):
     version: str = Field(default="1", description="Policy version")
     rules: list[dict] = Field(..., description="List of policy rules")
+    require_resource_registration: bool = False
 
 
 @api_app.put("/policy")
@@ -523,7 +529,8 @@ async def update_policy(req: UpdatePolicyRequest):
             raise HTTPException(400, f"Each rule must have 'id' and 'type' fields")
         rules.append(PolicyRule(id=r["id"], type=r["type"], config=r.get("config", {})))
 
-    policy = Policy(rules=rules, version=req.version)
+    policy = Policy(rules=rules, version=req.version,
+                    require_resource_registration=req.require_resource_registration)
     gateway.policy = policy
     gateway._policy_engine = PolicyEngine(policy)
 
@@ -531,6 +538,7 @@ async def update_policy(req: UpdatePolicyRequest):
         await store.save_policy(gateway.tenant, {
             "version": req.version,
             "rules": req.rules,
+            "require_resource_registration": req.require_resource_registration,
         })
     except Exception as e:
         logger.warning(f"Policy persistence warning: {e}")
@@ -548,30 +556,187 @@ class AgentRegisterRequest(BaseModel):
     public_key: dict = Field(..., description="Agent's Ed25519 public key as JWK")
 
 
+def _get_caller_identity(request) -> str:
+    """Extract the authenticated caller identity from Cloud Run headers."""
+    # Cloud Run sets X-Serverless-Authorization or forwards the OIDC token
+    # For the demo, we also accept X-Forwarded-User as a proxy identity
+    for header in ["x-goog-authenticated-user-email", "x-forwarded-user"]:
+        val = request.headers.get(header, "")
+        if val:
+            return val.removeprefix("accounts.google.com:")
+    return ""
+
+
 @api_app.post("/agents/register")
-async def register_agent(req: AgentRegisterRequest):
+async def register_agent(req: AgentRegisterRequest, request: Request):
     """Register an agent's public key for identity verification.
 
     After registration, the agent can sign DPoP-style proofs that
     the Gateway verifies before authorizing actions. This binds
     authorization decisions to a specific verified identity.
+
+    Returns 409 if the agent_id is already registered.
     """
+    from .identity import AgentAlreadyRegistered
+    caller = _get_caller_identity(request)
     try:
         gateway = _get_gateway()
-        agent = gateway._registry.register(req.agent_id, req.public_key)
+        agent = gateway._registry.register(
+            req.agent_id, req.public_key, registered_by=caller,
+        )
         return {
             "status": "registered",
             "agent_id": agent.agent_id,
             "kid": agent.kid,
+            "registered_by": agent.registered_by,
         }
+    except AgentAlreadyRegistered as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(400, f"Registration failed: {e}")
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")
 
 
+@api_app.delete("/agents/{agent_id}")
+async def revoke_agent(agent_id: str, request: Request):
+    """Revoke an agent's registration. The record is kept for audit."""
+    caller = _get_caller_identity(request)
+    try:
+        gateway = _get_gateway()
+        gateway._registry.revoke(agent_id, revoked_by=caller)
+        return {"status": "revoked", "agent_id": agent_id}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @api_app.get("/agents")
-async def list_agents():
-    """List all registered agents."""
-    return {"agents": _get_gateway()._registry.list_agents()}
+async def list_agents(include_revoked: bool = False):
+    """List registered agents. Use ?include_revoked=true to include revoked."""
+    return {"agents": _get_gateway()._registry.list_agents(include_revoked=include_revoked)}
+
+
+# --- Resource endpoints ---
+
+class ResourceRegisterRequest(BaseModel):
+    resource_id: str = Field(..., min_length=1, max_length=256)
+    display_name: str = Field(..., min_length=1, max_length=256)
+    description: str = ""
+    resource_type: str = ""
+    owner: str = ""
+    metadata: dict | None = None
+
+
+class ResourceUpdateRequest(BaseModel):
+    display_name: str | None = None
+    description: str | None = None
+    resource_type: str | None = None
+    owner: str | None = None
+    metadata: dict | None = None
+
+
+def _get_resource_registry():
+    from .resources import ResourceRegistry
+    gateway = _get_gateway()
+    reg = getattr(gateway, "_resource_registry", None)
+    # Upgrade to Firestore-backed registry if not already
+    if reg is None or (reg._db is None and os.environ.get("FIRESTORE_ENABLED", "").lower() == "true"):
+        firestore_db = None
+        if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+            try:
+                from google.cloud import firestore
+                firestore_db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+            except Exception:
+                pass
+        gateway._resource_registry = ResourceRegistry(
+            tenant_id=gateway.tenant, firestore_client=firestore_db,
+        )
+    return gateway._resource_registry
+
+
+@api_app.post("/resources/register")
+async def register_resource(req: ResourceRegisterRequest, request: Request):
+    """Register a resource in the tenant's resource registry."""
+    from .resources import ResourceConflict
+    caller = _get_caller_identity(request)
+    registry = _get_resource_registry()
+    try:
+        result = registry.register(
+            resource_id=req.resource_id,
+            display_name=req.display_name,
+            description=req.description,
+            resource_type=req.resource_type,
+            owner=req.owner,
+            metadata=req.metadata,
+            registered_by=caller or "anonymous",
+        )
+        return {
+            "status": "registered",
+            "resource_id": result["resource_id"],
+            "display_name": result["display_name"],
+            "version": result["version"],
+            "registered_at": result["registered_at"],
+        }
+    except ResourceConflict as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@api_app.get("/resources")
+async def list_resources(
+    include_revoked: bool = False,
+    limit: int = 100,
+    cursor: str | None = None,
+):
+    """List registered resources (paginated)."""
+    registry = _get_resource_registry()
+    resources, next_cursor = registry.list_all(
+        include_revoked=include_revoked, limit=limit, cursor=cursor,
+    )
+    return {"resources": resources, "next_cursor": next_cursor, "count": len(resources)}
+
+
+@api_app.get("/resources/{resource_id:path}")
+async def get_resource(resource_id: str):
+    """Get a single resource by ID."""
+    registry = _get_resource_registry()
+    result = registry.get(resource_id)
+    if not result:
+        raise HTTPException(404, f"Resource '{resource_id}' not found")
+    return result
+
+
+@api_app.delete("/resources/{resource_id:path}")
+async def revoke_resource(resource_id: str, request: Request):
+    """Revoke a resource registration."""
+    caller = _get_caller_identity(request)
+    registry = _get_resource_registry()
+    try:
+        result = registry.revoke(resource_id, revoked_by=caller or "anonymous")
+        return {"status": "revoked", "resource_id": resource_id}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@api_app.patch("/resources/{resource_id:path}")
+async def update_resource(resource_id: str, req: ResourceUpdateRequest, request: Request):
+    """Update resource metadata."""
+    caller = _get_caller_identity(request)
+    registry = _get_resource_registry()
+    try:
+        result = registry.update_metadata(
+            resource_id=resource_id,
+            updated_by=caller or "anonymous",
+            display_name=req.display_name,
+            description=req.description,
+            resource_type=req.resource_type,
+            owner=req.owner,
+            metadata=req.metadata,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(404 if "not found" in str(e).lower() else 400, str(e))
 
 
 @api_app.get("/anchors")

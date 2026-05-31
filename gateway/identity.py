@@ -45,6 +45,12 @@ class RegisteredAgent:
     public_key: Ed25519PublicKey
     kid: str  # key fingerprint
     registered_at: float = field(default_factory=time.time)
+    registered_by: str = ""
+    status: str = "active"
+
+
+class AgentAlreadyRegistered(Exception):
+    """Raised when trying to register an agent_id that already exists."""
 
 
 class AgentRegistry:
@@ -55,14 +61,54 @@ class AgentRegistry:
     because agents re-register on startup.
     """
 
-    def __init__(self):
+    def __init__(self, tenant: str = "default", firestore_db=None):
         self._agents: dict[str, RegisteredAgent] = {}
         # Also index by kid for fast lookup
         self._by_kid: dict[str, RegisteredAgent] = {}
+        self._tenant = tenant
+        self._db = firestore_db
+        if self._db:
+            self._load_from_firestore()
 
-    def register(self, agent_id: str, public_key_jwk: dict) -> RegisteredAgent:
-        """Register an agent's public key. Returns the registered agent."""
-        # Parse the JWK
+    def _collection(self):
+        return self._db.collection("tenants").document(self._tenant) \
+            .collection("agent_registry")
+
+    def _load_from_firestore(self) -> None:
+        try:
+            count = 0
+            for doc in self._collection().stream():
+                data = doc.to_dict()
+                if data.get("status", "active") != "active":
+                    continue
+                jwk = data.get("public_key_jwk", {})
+                if not jwk:
+                    continue
+                try:
+                    x = jwk.get("x", "")
+                    x_padded = x.replace("-", "+").replace("_", "/")
+                    padding = 4 - len(x_padded) % 4
+                    if padding != 4:
+                        x_padded += "=" * padding
+                    key_bytes = base64.b64decode(x_padded)
+                    public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+                    kid = "agent-" + hashlib.sha256(key_bytes).hexdigest()[:16]
+                except Exception:
+                    logger.warning("Skipping agent %s: invalid JWK", doc.id)
+                    continue
+                agent = RegisteredAgent(
+                    agent_id=data["agent_id"],
+                    public_key=public_key,
+                    kid=kid,
+                )
+                self._agents[agent.agent_id] = agent
+                self._by_kid[kid] = agent
+                count += 1
+            logger.info("[startup] Loaded %d registered agents from Firestore", count)
+        except Exception as e:
+            logger.warning("[startup] Could not load agents from Firestore: %s", e)
+
+    def _parse_jwk(self, public_key_jwk: dict):
         x = public_key_jwk.get("x", "")
         x_padded = x.replace("-", "+").replace("_", "/")
         padding = 4 - len(x_padded) % 4
@@ -70,17 +116,38 @@ class AgentRegistry:
             x_padded += "=" * padding
         key_bytes = base64.b64decode(x_padded)
         public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
-
-        # Compute key fingerprint
         kid = "agent-" + hashlib.sha256(key_bytes).hexdigest()[:16]
+        return public_key, key_bytes, kid
+
+    def register(self, agent_id: str, public_key_jwk: dict, registered_by: str = "") -> RegisteredAgent:
+        """Register an agent's public key. Returns the registered agent."""
+        existing = self._agents.get(agent_id)
+        if existing and existing.status == "active":
+            raise AgentAlreadyRegistered(
+                f"Agent '{agent_id}' is already registered (kid={existing.kid})"
+            )
+
+        public_key, key_bytes, kid = self._parse_jwk(public_key_jwk)
 
         agent = RegisteredAgent(
             agent_id=agent_id,
             public_key=public_key,
             kid=kid,
+            registered_by=registered_by,
         )
         self._agents[agent_id] = agent
         self._by_kid[kid] = agent
+
+        if self._db:
+            self._collection().document(agent_id).set({
+                "agent_id": agent_id,
+                "kid": kid,
+                "public_key_jwk": public_key_jwk,
+                "registered_at": time.time(),
+                "registered_by": registered_by,
+                "status": "active",
+            })
+
         logger.info(f"Registered agent: {agent_id} kid={kid}")
         return agent
 
@@ -90,9 +157,10 @@ class AgentRegistry:
     def get_by_kid(self, kid: str) -> RegisteredAgent | None:
         return self._by_kid.get(kid)
 
-    def list_agents(self) -> list[dict]:
+    def list_agents(self, include_revoked: bool = False) -> list[dict]:
         return [
-            {"agent_id": a.agent_id, "kid": a.kid, "registered_at": a.registered_at}
+            {"agent_id": a.agent_id, "kid": a.kid, "registered_at": a.registered_at,
+             "registered_by": a.registered_by, "status": a.status}
             for a in self._agents.values()
         ]
 
