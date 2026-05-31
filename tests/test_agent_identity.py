@@ -142,13 +142,9 @@ class TestAgentIdentityAPI:
         agent_key = Ed25519PrivateKey.generate()
         jwk = _make_jwk(agent_key)
 
-        # Register agent
-        resp = client.post("/agents/register", json={
-            "agent_id": "test-agent-api",
-            "public_key": jwk,
-        })
-        assert resp.status_code == 200
-        data = resp.json()
+        # Register agent with PoP
+        from tests.helpers import register_agent_with_pop
+        data = register_agent_with_pop(client, "test-agent-api", agent_key)
         assert data["status"] == "registered"
         assert data["agent_id"] == "test-agent-api"
 

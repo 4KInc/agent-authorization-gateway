@@ -323,12 +323,9 @@ class TestCrossSurface:
         jwk = _make_jwk(agent_key)
         agent_id = "rest-test-agent"
 
-        # Register
-        resp = client.post("/agents/register", json={
-            "agent_id": agent_id,
-            "public_key": jwk,
-        })
-        assert resp.status_code == 200
+        # Register with PoP
+        from tests.helpers import register_agent_with_pop
+        register_agent_with_pop(client, agent_id, agent_key)
 
         # Authorize with proof
         proof = create_agent_proof(agent_key, agent_id, "read", "staging-db")

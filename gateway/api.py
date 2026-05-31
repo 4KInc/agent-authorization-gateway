@@ -551,69 +551,86 @@ async def update_policy(req: UpdatePolicyRequest):
     }
 
 
+# --- Agent Registration with Proof of Possession ---
+
+from .identity import RegistrationChallengeCache, verify_registration_proof
+
+_challenge_cache = RegistrationChallengeCache()
+
+
+class AgentChallengeRequest(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=256)
+
+
+@api_app.post("/agents/register-challenge")
+async def register_challenge(req: AgentChallengeRequest):
+    """Get a registration challenge nonce (step 1 of 2)."""
+    gateway = _get_gateway()
+    return _challenge_cache.issue(gateway.tenant, req.agent_id)
+
+
+class AgentRegisterProof(BaseModel):
+    nonce: str
+    challenge_id: str
+    signature: str
+    iat: int
+
+
 class AgentRegisterRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=256)
     public_key: dict = Field(..., description="Agent's Ed25519 public key as JWK")
-
-
-def _get_caller_identity(request) -> str:
-    """Extract the authenticated caller identity from Cloud Run headers."""
-    # Cloud Run sets X-Serverless-Authorization or forwards the OIDC token
-    # For the demo, we also accept X-Forwarded-User as a proxy identity
-    for header in ["x-goog-authenticated-user-email", "x-forwarded-user"]:
-        val = request.headers.get(header, "")
-        if val:
-            return val.removeprefix("accounts.google.com:")
-    return ""
+    proof: AgentRegisterProof = Field(..., description="Proof of possession")
 
 
 @api_app.post("/agents/register")
-async def register_agent(req: AgentRegisterRequest, request: Request):
-    """Register an agent's public key for identity verification.
-
-    After registration, the agent can sign DPoP-style proofs that
-    the Gateway verifies before authorizing actions. This binds
-    authorization decisions to a specific verified identity.
-
-    Returns 409 if the agent_id is already registered.
-    """
-    from .identity import AgentAlreadyRegistered
-    caller = _get_caller_identity(request)
+async def register_agent(req: AgentRegisterRequest):
+    """Register with proof of possession (step 2 of 2). Replace semantics."""
+    gateway = _get_gateway()
+    valid, err = verify_registration_proof(
+        public_key_jwk=req.public_key,
+        proof=req.proof.model_dump(),
+        tenant_id=gateway.tenant,
+        agent_id=req.agent_id,
+        challenge_cache=_challenge_cache,
+    )
+    if not valid:
+        status = 401 if err == "INVALID_PROOF_SIGNATURE" else 400
+        raise HTTPException(status, detail=err)
     try:
-        gateway = _get_gateway()
-        agent = gateway._registry.register(
-            req.agent_id, req.public_key, registered_by=caller,
-        )
+        agent = gateway._registry.register(req.agent_id, req.public_key)
         return {
             "status": "registered",
             "agent_id": agent.agent_id,
             "kid": agent.kid,
-            "registered_by": agent.registered_by,
+            "proof_of_possession_at_registration": True,
         }
-    except AgentAlreadyRegistered as e:
-        raise HTTPException(409, str(e))
-    except ValueError as e:
-        raise HTTPException(400, f"Registration failed: {e}")
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")
 
 
 @api_app.delete("/agents/{agent_id}")
-async def revoke_agent(agent_id: str, request: Request):
-    """Revoke an agent's registration. The record is kept for audit."""
-    caller = _get_caller_identity(request)
+async def delete_agent(agent_id: str):
+    """Delete an agent's registration."""
     try:
-        gateway = _get_gateway()
-        gateway._registry.revoke(agent_id, revoked_by=caller)
-        return {"status": "revoked", "agent_id": agent_id}
+        _get_gateway()._registry.revoke(agent_id)
+        return {"status": "deleted", "agent_id": agent_id}
     except ValueError as e:
         raise HTTPException(404, str(e))
 
 
 @api_app.get("/agents")
-async def list_agents(include_revoked: bool = False):
-    """List registered agents. Use ?include_revoked=true to include revoked."""
-    return {"agents": _get_gateway()._registry.list_agents(include_revoked=include_revoked)}
+async def list_agents():
+    """List all registered agents."""
+    return {"agents": _get_gateway()._registry.list_agents()}
+
+
+def _get_caller_identity(request) -> str:
+    """Extract the authenticated caller identity from Cloud Run headers."""
+    for header in ["x-goog-authenticated-user-email", "x-forwarded-user"]:
+        val = request.headers.get(header, "")
+        if val:
+            return val.removeprefix("accounts.google.com:")
+    return ""
 
 
 # --- Resource endpoints ---

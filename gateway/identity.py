@@ -4,15 +4,17 @@ Each Worker agent has a long-lived Ed25519 keypair (the agent's identity).
 Before authorizing, the agent must prove it holds the private key by
 signing a DPoP-style proof (RFC 9449 inspired).
 
+Registration requires proof of possession: the registrant must sign a
+challenge nonce with the private key corresponding to the public key
+being registered. This prevents registering keys you don't control.
+
 Flow:
 1. Agent generates Ed25519 keypair
-2. Agent registers public key with Gateway → gets agent_id
-3. Every authorize_action call includes a signed proof JWT
-4. Gateway verifies the proof before evaluating policy
-5. Receipt includes the verified agent_id and the agent's key fingerprint
-
-This prevents identity spoofing: a compromised agent cannot impersonate
-another agent because it doesn't hold the other agent's private key.
+2. Agent requests a registration challenge (nonce)
+3. Agent signs the challenge and registers with the signed proof
+4. Every authorize_action call includes a signed DPoP proof JWT
+5. Gateway verifies the proof before evaluating policy
+6. Receipt includes the verified agent_id and the agent's key fingerprint
 """
 
 from __future__ import annotations
@@ -20,9 +22,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -32,10 +36,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 logger = logging.getLogger("gateway.identity")
 
-# Replay cache for proof JTIs
 _proof_jti_cache: dict[str, float] = {}
 _PROOF_JTI_MAX = 5000
-_PROOF_MAX_AGE = 30  # proofs must be created within last 30 seconds
+_PROOF_MAX_AGE = 30
+_CHALLENGE_TTL = 60
 
 
 @dataclass
@@ -43,113 +47,66 @@ class RegisteredAgent:
     """A registered agent with a verified identity."""
     agent_id: str
     public_key: Ed25519PublicKey
-    kid: str  # key fingerprint
+    kid: str
     registered_at: float = field(default_factory=time.time)
-    registered_by: str = ""
-    status: str = "active"
 
 
 class AgentAlreadyRegistered(Exception):
     """Raised when trying to register an agent_id that already exists."""
 
 
+def _parse_jwk(public_key_jwk: dict) -> tuple[Ed25519PublicKey, bytes, str]:
+    """Parse and validate an Ed25519 JWK. Returns (public_key, raw_bytes, kid)."""
+    if public_key_jwk.get("kty") != "OKP":
+        raise ValueError(f"JWK kty must be 'OKP', got '{public_key_jwk.get('kty')}'")
+    if public_key_jwk.get("crv") != "Ed25519":
+        raise ValueError(f"JWK crv must be 'Ed25519', got '{public_key_jwk.get('crv')}'")
+    x = public_key_jwk.get("x", "")
+    if not x:
+        raise ValueError("JWK missing 'x' field")
+    x_padded = x.replace("-", "+").replace("_", "/")
+    padding = 4 - len(x_padded) % 4
+    if padding != 4:
+        x_padded += "=" * padding
+    key_bytes = base64.b64decode(x_padded)
+    if len(key_bytes) != 32:
+        raise ValueError(f"Ed25519 public key must be 32 bytes, got {len(key_bytes)}")
+    public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+    kid = "agent-" + hashlib.sha256(key_bytes).hexdigest()[:16]
+    return public_key, key_bytes, kid
+
+
+def validate_agent_id(agent_id: str) -> None:
+    """Validate agent_id format. Raises ValueError if invalid."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9_-]{1,256}$", agent_id):
+        raise ValueError(f"agent_id must match [a-zA-Z0-9_-]{{1,256}}, got '{agent_id[:64]}'")
+
+
 class AgentRegistry:
-    """In-memory registry of agent identities.
+    """In-memory registry of agent identities with replace semantics."""
 
-    In production, this would be backed by Firestore or another
-    persistent store. For the hackathon, in-memory is sufficient
-    because agents re-register on startup.
-    """
-
-    def __init__(self, tenant: str = "default", firestore_db=None):
+    def __init__(self, **kwargs):
         self._agents: dict[str, RegisteredAgent] = {}
-        # Also index by kid for fast lookup
         self._by_kid: dict[str, RegisteredAgent] = {}
-        self._tenant = tenant
-        self._db = firestore_db
-        if self._db:
-            self._load_from_firestore()
 
-    def _collection(self):
-        return self._db.collection("tenants").document(self._tenant) \
-            .collection("agent_registry")
-
-    def _load_from_firestore(self) -> None:
-        try:
-            count = 0
-            for doc in self._collection().stream():
-                data = doc.to_dict()
-                if data.get("status", "active") != "active":
-                    continue
-                jwk = data.get("public_key_jwk", {})
-                if not jwk:
-                    continue
-                try:
-                    x = jwk.get("x", "")
-                    x_padded = x.replace("-", "+").replace("_", "/")
-                    padding = 4 - len(x_padded) % 4
-                    if padding != 4:
-                        x_padded += "=" * padding
-                    key_bytes = base64.b64decode(x_padded)
-                    public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
-                    kid = "agent-" + hashlib.sha256(key_bytes).hexdigest()[:16]
-                except Exception:
-                    logger.warning("Skipping agent %s: invalid JWK", doc.id)
-                    continue
-                agent = RegisteredAgent(
-                    agent_id=data["agent_id"],
-                    public_key=public_key,
-                    kid=kid,
-                )
-                self._agents[agent.agent_id] = agent
-                self._by_kid[kid] = agent
-                count += 1
-            logger.info("[startup] Loaded %d registered agents from Firestore", count)
-        except Exception as e:
-            logger.warning("[startup] Could not load agents from Firestore: %s", e)
-
-    def _parse_jwk(self, public_key_jwk: dict):
-        x = public_key_jwk.get("x", "")
-        x_padded = x.replace("-", "+").replace("_", "/")
-        padding = 4 - len(x_padded) % 4
-        if padding != 4:
-            x_padded += "=" * padding
-        key_bytes = base64.b64decode(x_padded)
-        public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
-        kid = "agent-" + hashlib.sha256(key_bytes).hexdigest()[:16]
-        return public_key, key_bytes, kid
-
-    def register(self, agent_id: str, public_key_jwk: dict, registered_by: str = "") -> RegisteredAgent:
-        """Register an agent's public key. Returns the registered agent."""
+    def register(self, agent_id: str, public_key_jwk: dict, **kwargs) -> RegisteredAgent:
+        """Register an agent's public key with replace semantics."""
+        pub_key, key_bytes, kid = _parse_jwk(public_key_jwk)
         existing = self._agents.get(agent_id)
-        if existing and existing.status == "active":
-            raise AgentAlreadyRegistered(
-                f"Agent '{agent_id}' is already registered (kid={existing.kid})"
-            )
-
-        public_key, key_bytes, kid = self._parse_jwk(public_key_jwk)
-
-        agent = RegisteredAgent(
-            agent_id=agent_id,
-            public_key=public_key,
-            kid=kid,
-            registered_by=registered_by,
-        )
+        if existing:
+            self._by_kid.pop(existing.kid, None)
+        agent = RegisteredAgent(agent_id=agent_id, public_key=pub_key, kid=kid)
         self._agents[agent_id] = agent
         self._by_kid[kid] = agent
-
-        if self._db:
-            self._collection().document(agent_id).set({
-                "agent_id": agent_id,
-                "kid": kid,
-                "public_key_jwk": public_key_jwk,
-                "registered_at": time.time(),
-                "registered_by": registered_by,
-                "status": "active",
-            })
-
-        logger.info(f"Registered agent: {agent_id} kid={kid}")
+        logger.info("Registered agent: %s kid=%s", agent_id, kid)
         return agent
+
+    def revoke(self, agent_id: str, **kwargs) -> None:
+        agent = self._agents.pop(agent_id, None)
+        if agent is None:
+            raise ValueError(f"Agent '{agent_id}' is not registered")
+        self._by_kid.pop(agent.kid, None)
 
     def get(self, agent_id: str) -> RegisteredAgent | None:
         return self._agents.get(agent_id)
@@ -157,13 +114,153 @@ class AgentRegistry:
     def get_by_kid(self, kid: str) -> RegisteredAgent | None:
         return self._by_kid.get(kid)
 
-    def list_agents(self, include_revoked: bool = False) -> list[dict]:
+    def list_agents(self, **kwargs) -> list[dict]:
         return [
-            {"agent_id": a.agent_id, "kid": a.kid, "registered_at": a.registered_at,
-             "registered_by": a.registered_by, "status": a.status}
+            {"agent_id": a.agent_id, "kid": a.kid, "registered_at": a.registered_at}
             for a in self._agents.values()
         ]
 
+
+# ============================================================================
+# Registration Proof of Possession (PoP) — Challenge-Response
+# ============================================================================
+
+@dataclass
+class _Challenge:
+    nonce: str
+    challenge_id: str
+    tenant: str
+    agent_id: str
+    expires_at: float
+    consumed: bool = False
+
+
+class RegistrationChallengeCache:
+    """In-memory cache of registration challenges. Single-use, 60-second TTL."""
+
+    def __init__(self, ttl_seconds: int = _CHALLENGE_TTL):
+        self._ttl = ttl_seconds
+        self._challenges: dict[str, _Challenge] = {}
+
+    def _key(self, tenant: str, agent_id: str, nonce: str) -> str:
+        return f"{tenant}:{agent_id}:{nonce}"
+
+    def issue(self, tenant: str, agent_id: str) -> dict:
+        self._gc()
+        nonce = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+        challenge_id = str(uuid.uuid4())
+        expires_at = time.time() + self._ttl
+        ch = _Challenge(
+            nonce=nonce, challenge_id=challenge_id,
+            tenant=tenant, agent_id=agent_id, expires_at=expires_at,
+        )
+        self._challenges[self._key(tenant, agent_id, nonce)] = ch
+        return {
+            "nonce": nonce,
+            "challenge_id": challenge_id,
+            "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
+        }
+
+    def consume(self, tenant: str, agent_id: str, nonce: str, challenge_id: str) -> tuple[bool, str]:
+        self._gc()
+        key = self._key(tenant, agent_id, nonce)
+        ch = self._challenges.get(key)
+        if ch is None:
+            return False, "CHALLENGE_NOT_FOUND"
+        if ch.consumed:
+            return False, "CHALLENGE_REPLAY"
+        if time.time() > ch.expires_at:
+            return False, "CHALLENGE_EXPIRED"
+        if ch.challenge_id != challenge_id:
+            return False, "CHALLENGE_ID_MISMATCH"
+        ch.consumed = True
+        del self._challenges[key]
+        return True, ""
+
+    def _gc(self):
+        now = time.time()
+        expired = [k for k, v in self._challenges.items() if now > v.expires_at]
+        for k in expired:
+            del self._challenges[k]
+
+
+def build_registration_message(
+    tenant_id: str, agent_id: str, public_key_jwk: dict,
+    nonce: str, challenge_id: str, iat: int,
+) -> bytes:
+    """Build the canonical message for registration PoP signature."""
+    from .canonical import canonicalize
+    return canonicalize({
+        "v": "1",
+        "tenant_id": tenant_id,
+        "agent_id": agent_id,
+        "public_key": public_key_jwk,
+        "nonce": nonce,
+        "challenge_id": challenge_id,
+        "iat": iat,
+    })
+
+
+def verify_registration_proof(
+    public_key_jwk: dict,
+    proof: dict,
+    tenant_id: str,
+    agent_id: str,
+    challenge_cache: RegistrationChallengeCache,
+) -> tuple[bool, str]:
+    """Verify a registration proof of possession.
+    Returns (valid, error_code). error_code is empty string on success.
+    """
+    if not proof:
+        return False, "NO_PROOF"
+
+    nonce = proof.get("nonce")
+    challenge_id = proof.get("challenge_id")
+    signature_b64 = proof.get("signature")
+    iat = proof.get("iat")
+
+    if not all([nonce, challenge_id, signature_b64, iat is not None]):
+        return False, "INVALID_PROOF_FORMAT"
+
+    try:
+        iat_int = int(iat)
+    except (TypeError, ValueError):
+        return False, "INVALID_PROOF_FORMAT"
+    if abs(time.time() - iat_int) > _CHALLENGE_TTL:
+        return False, "PROOF_EXPIRED"
+
+    valid, err = challenge_cache.consume(tenant_id, agent_id, nonce, challenge_id)
+    if not valid:
+        return False, err
+
+    try:
+        sig_padded = signature_b64.replace("-", "+").replace("_", "/")
+        pad = 4 - len(sig_padded) % 4
+        if pad != 4:
+            sig_padded += "=" * pad
+        sig_bytes = base64.b64decode(sig_padded)
+    except Exception:
+        return False, "SIGNATURE_DECODE_ERROR"
+
+    try:
+        pub_key, _, _ = _parse_jwk(public_key_jwk)
+    except ValueError:
+        return False, "INVALID_PROOF_FORMAT"
+
+    message = build_registration_message(
+        tenant_id, agent_id, public_key_jwk, nonce, challenge_id, iat_int,
+    )
+    try:
+        pub_key.verify(sig_bytes, message)
+    except Exception:
+        return False, "INVALID_PROOF_SIGNATURE"
+
+    return True, ""
+
+
+# ============================================================================
+# DPoP Agent Proof (authorize path — unchanged)
+# ============================================================================
 
 def create_agent_proof(
     private_key: Ed25519PrivateKey,
@@ -173,16 +270,7 @@ def create_agent_proof(
     action_digest: str | None = None,
     gateway_url: str = "agent-authorization-gateway",
 ) -> str:
-    """Create a DPoP-style proof JWT signed by the agent's private key.
-
-    The proof binds the agent's identity to a specific action request,
-    preventing replay and cross-action attacks.
-
-    action_digest is ALWAYS included. If not provided explicitly, it is
-    auto-computed from (agent_id, action, resource) using the same algorithm
-    as the gateway (canonicalize + SHA-256). This ensures proofs always
-    carry the mandatory digest binding.
-    """
+    """Create a DPoP-style proof JWT signed by the agent's private key."""
     if action_digest is None:
         from .tokens import compute_action_digest
         action_digest = compute_action_digest(agent_id, action, resource)
@@ -190,8 +278,8 @@ def create_agent_proof(
     now = time.time()
     payload = {
         "sub": agent_id,
-        "htm": "POST",  # HTTP method
-        "htu": gateway_url,  # target URL
+        "htm": "POST",
+        "htu": gateway_url,
         "action": action,
         "resource": resource,
         "jti": str(uuid.uuid4()),
@@ -210,20 +298,17 @@ def verify_agent_proof(
     expected_action_digest: str | None = None,
 ) -> RegisteredAgent:
     """Verify a DPoP-style agent proof.
-
     Returns the verified RegisteredAgent on success.
     Raises ValueError with specific error on failure.
     """
     global _proof_jti_cache
 
-    # Decode header to get the algorithm (without verification first)
     try:
         header = jwt.get_unverified_header(proof)
         unverified = jwt.decode(proof, options={"verify_signature": False})
     except jwt.InvalidTokenError as e:
         raise ValueError(f"INVALID_PROOF: malformed proof JWT: {e}")
 
-    # Look up the agent
     agent_id = unverified.get("sub", "")
     if agent_id != expected_agent_id:
         raise ValueError(f"AGENT_MISMATCH: proof sub '{agent_id}' != expected '{expected_agent_id}'")
@@ -232,30 +317,22 @@ def verify_agent_proof(
     if agent is None:
         raise ValueError(f"UNREGISTERED_AGENT: agent '{agent_id}' is not registered")
 
-    # Verify signature with the agent's registered public key
     try:
-        claims = jwt.decode(
-            proof,
-            agent.public_key,
-            algorithms=["EdDSA"],
-        )
+        claims = jwt.decode(proof, agent.public_key, algorithms=["EdDSA"])
     except jwt.InvalidSignatureError:
         raise ValueError("INVALID_PROOF_SIGNATURE: proof signature does not match registered key")
     except jwt.InvalidTokenError as e:
         raise ValueError(f"INVALID_PROOF: {e}")
 
-    # Check freshness
     iat = claims.get("iat", 0)
     if time.time() - iat > _PROOF_MAX_AGE:
         raise ValueError("PROOF_EXPIRED: proof is too old (max 30 seconds)")
 
-    # Check action binding
     if claims.get("action") != expected_action:
         raise ValueError(f"PROOF_ACTION_MISMATCH: proof action '{claims.get('action')}' != '{expected_action}'")
     if claims.get("resource") != expected_resource:
         raise ValueError(f"PROOF_RESOURCE_MISMATCH: proof resource '{claims.get('resource')}' != '{expected_resource}'")
 
-    # Check action_digest binding (MANDATORY when the gateway provides an expected digest)
     if expected_action_digest:
         proof_digest = claims.get("action_digest")
         if not proof_digest:
@@ -269,12 +346,10 @@ def verify_agent_proof(
                 f"!= computed '{expected_action_digest}'"
             )
 
-    # Check JTI replay (distinct cache from token JTIs)
     jti = claims.get("jti", "")
     if jti in _proof_jti_cache:
         raise ValueError("PROOF_REPLAY: proof JTI has already been used")
     _proof_jti_cache[jti] = time.time() + _PROOF_MAX_AGE
-    # Clean old entries
     now = time.time()
     expired = [k for k, v in _proof_jti_cache.items() if v < now]
     for k in expired:
