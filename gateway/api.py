@@ -673,6 +673,107 @@ async def list_agents():
     return {"agents": _get_gateway()._registry.list_agents()}
 
 
+# --- Action endpoints ---
+
+from .actions import ActionConflict, ActionRegistry, RiskLevel
+
+
+def _get_action_registry():
+    from .actions import ActionRegistry
+    gateway = _get_gateway()
+    reg = getattr(gateway, "_action_registry", None)
+    if reg is None:
+        firestore_db = None
+        if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+            try:
+                from google.cloud import firestore
+                firestore_db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+            except Exception:
+                pass
+        gateway._action_registry = ActionRegistry(tenant_id=gateway.tenant, firestore_client=firestore_db)
+        reg = gateway._action_registry
+    return reg
+
+
+class ActionRegisterRequest(BaseModel):
+    action_id: str = Field(..., min_length=1, max_length=256)
+    display_name: str = Field(..., min_length=1, max_length=256)
+    description: str = ""
+    risk_level: RiskLevel = Field(..., description="Risk classification")
+    requires_human_approval: bool = False
+    metadata: dict | None = None
+
+
+@api_app.post("/actions/register")
+async def register_action(req: ActionRegisterRequest, request: Request):
+    """Register an action in the tenant's action registry."""
+    caller = _get_caller_identity_safe(request)
+    registry = _get_action_registry()
+    try:
+        result = registry.register(
+            action_id=req.action_id,
+            display_name=req.display_name,
+            description=req.description,
+            risk_level=req.risk_level.value,
+            requires_human_approval=req.requires_human_approval,
+            registered_by=caller or "anonymous",
+            metadata=req.metadata,
+        )
+        return {"status": "registered", **{k: result[k] for k in ("action_id", "display_name", "risk_level", "version", "registered_at")}}
+    except ActionConflict as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@api_app.get("/actions")
+async def list_actions(include_revoked: bool = False, limit: int = 100):
+    """List registered actions."""
+    registry = _get_action_registry()
+    actions = registry.list_all(include_revoked=include_revoked, limit=limit)
+    return {"actions": actions, "count": len(actions)}
+
+
+@api_app.get("/actions/{action_id:path}")
+async def get_action(action_id: str, include_revoked: bool = False):
+    """Get a specific action by ID."""
+    registry = _get_action_registry()
+    action = registry.get(action_id, include_revoked=include_revoked)
+    if action is None:
+        raise HTTPException(404, f"Action '{action_id}' not found")
+    return action
+
+
+@api_app.delete("/actions/{action_id:path}")
+async def revoke_action(action_id: str):
+    """Revoke an action."""
+    registry = _get_action_registry()
+    try:
+        result = registry.revoke(action_id)
+        return {"status": "revoked", "action_id": action_id}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@api_app.patch("/actions/{action_id:path}")
+async def update_action(action_id: str, updates: dict, request: Request):
+    """Update action metadata."""
+    registry = _get_action_registry()
+    try:
+        result = registry.update(action_id, updates)
+        return result
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+def _get_caller_identity_safe(request) -> str:
+    for header in ["x-goog-authenticated-user-email", "x-forwarded-user"]:
+        val = request.headers.get(header, "")
+        if val:
+            return val.removeprefix("accounts.google.com:")
+    return ""
+
+
 def _get_caller_identity(request) -> str:
     """Extract the authenticated caller identity from Cloud Run headers."""
     for header in ["x-goog-authenticated-user-email", "x-forwarded-user"]:
