@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
 """Bootstrap re-registration of Gate system agents with proof of possession.
 
+KNOWN LIMITATION: This script registers system agents in the agent registry
+with PoP, but the resulting kid (`agent-{hash}`) does not match the live
+signing kid used to sign receipts and other artifacts (e.g.,
+`gateway-hackathon-demo-{hash}`, `auditor-{hash}`). This is because the
+registration endpoint applies a fixed `agent-` prefix, while live signing
+keys use service-specific prefixes managed via Secret Manager.
+
+The current architecture treats system agent identity as deployment-managed
+(Secret Manager + service-specific kid prefixes) and customer agent identity
+as registry-managed (PoP + `agent-` prefix). This separation is intentional.
+
+Unifying the two would require either:
+  (a) accepting an explicit kid_prefix on the registration endpoint, or
+  (b) detecting that the submitted key matches a known service key.
+Both are v1.0 roadmap items.
+
+This script is retained as a reference implementation of the PoP flow
+against system agent keys.
+
 For each system agent, reads its private key from Secret Manager, derives
 the public key, performs the two-step PoP exchange, and verifies the result.
 
