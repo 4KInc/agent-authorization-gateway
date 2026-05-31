@@ -124,7 +124,11 @@ async def lifespan(app: FastAPI):
         if stored_policy and "rules" in stored_policy:
             from .policy import Policy, PolicyRule, PolicyEngine
             rules = [PolicyRule(id=r["id"], type=r["type"], config=r["config"]) for r in stored_policy["rules"]]
-            policy = Policy(rules=rules, version=stored_policy.get("version", "1"))
+            policy = Policy(
+                rules=rules,
+                version=stored_policy.get("version", "1"),
+                require_resource_registration=bool(stored_policy.get("require_resource_registration", False)),
+            )
             gateway.policy = policy
             gateway._policy_engine = PolicyEngine(policy)
             logger.info(f"Loaded policy from Firestore: {len(rules)} rules, hash={policy.policy_hash()[:24]}")
@@ -493,6 +497,7 @@ async def get_policy():
         "tenant": gateway.tenant,
         "version": gateway.policy.version,
         "policy_hash": gateway.policy.policy_hash(),
+        "require_resource_registration": gateway.policy.require_resource_registration,
         "rules": [
             {"id": r.id, "type": r.type, "config": r.config}
             for r in gateway.policy.rules
@@ -503,6 +508,7 @@ async def get_policy():
 class UpdatePolicyRequest(BaseModel):
     version: str = Field(default="1", description="Policy version")
     rules: list[dict] = Field(..., description="List of policy rules")
+    require_resource_registration: bool = False
 
 
 @api_app.put("/policy")
@@ -523,7 +529,8 @@ async def update_policy(req: UpdatePolicyRequest):
             raise HTTPException(400, f"Each rule must have 'id' and 'type' fields")
         rules.append(PolicyRule(id=r["id"], type=r["type"], config=r.get("config", {})))
 
-    policy = Policy(rules=rules, version=req.version)
+    policy = Policy(rules=rules, version=req.version,
+                    require_resource_registration=req.require_resource_registration)
     gateway.policy = policy
     gateway._policy_engine = PolicyEngine(policy)
 
@@ -531,6 +538,7 @@ async def update_policy(req: UpdatePolicyRequest):
         await store.save_policy(gateway.tenant, {
             "version": req.version,
             "rules": req.rules,
+            "require_resource_registration": req.require_resource_registration,
         })
     except Exception as e:
         logger.warning(f"Policy persistence warning: {e}")

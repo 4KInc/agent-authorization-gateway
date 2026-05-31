@@ -4,9 +4,16 @@ Supports three rule types:
 1. Action allowlist — which actions are permitted
 2. Resource scope — which resources an agent can access
 3. Rate limiting — maximum actions per time window
+
+Policy can be loaded from a YAML file (POLICY_YAML_PATH env var)
+or falls back to the built-in demo policy.
 """
 
 from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
 
 import hashlib
 import time
@@ -28,6 +35,7 @@ class Policy:
     """A collection of policy rules."""
     rules: list[PolicyRule] = field(default_factory=list)
     version: str = "1"
+    require_resource_registration: bool = False
 
     def policy_hash(self) -> str:
         """Compute a deterministic hash of the policy for receipt binding."""
@@ -38,6 +46,8 @@ class Policy:
                 for r in self.rules
             ],
         }
+        if self.require_resource_registration:
+            policy_obj["require_resource_registration"] = True
         body_bytes = canonicalize(policy_obj)
         return "sha256:" + hashlib.sha256(body_bytes).hexdigest()
 
@@ -91,7 +101,7 @@ class PolicyEngine:
         if not allowed:
             return True
         action_lower = action.lower()
-        return any(a.lower() in action_lower for a in allowed)
+        return any(a.lower() == action_lower for a in allowed)
 
     def _check_resource_scope(self, rule: PolicyRule, resource: str) -> bool:
         allowed_resources = rule.config.get("allowed_resources", [])
@@ -165,3 +175,90 @@ def create_demo_policy() -> Policy:
             ),
         ],
     )
+
+
+logger = logging.getLogger("gateway.policy")
+
+_KNOWN_RULE_TYPES = {"allowlist", "resource_scope", "rate_limit"}
+
+
+def load_policy_from_yaml(path: str) -> Policy:
+    """Load a Policy from a YAML file.
+
+    Raises ValueError if the YAML is malformed, missing required fields,
+    or contains unknown rule types. Never silently falls back to a
+    permissive policy on error.
+    """
+    import yaml
+
+    yaml_path = Path(path)
+    if not yaml_path.exists():
+        raise ValueError(
+            f"Policy YAML not found at {path}. "
+            f"Either provide the file or unset POLICY_YAML_PATH "
+            f"to use the built-in demo policy."
+        )
+
+    try:
+        with yaml_path.open() as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Policy YAML at {path} failed to parse: {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Policy YAML at {path} must be a mapping at the top level, "
+            f"got {type(data).__name__}"
+        )
+
+    version = data.get("version")
+    if version is None:
+        raise ValueError("Policy YAML missing required field: version")
+
+    rules_data = data.get("rules")
+    if not isinstance(rules_data, list):
+        raise ValueError(
+            f"Policy YAML 'rules' must be a list, got {type(rules_data).__name__}"
+        )
+
+    rules = []
+    for i, rule_data in enumerate(rules_data):
+        if not isinstance(rule_data, dict):
+            raise ValueError(f"Rule {i} must be a mapping")
+        rule_id = rule_data.get("id")
+        rule_type = rule_data.get("type")
+        rule_config = rule_data.get("config", {})
+
+        if rule_id is None or rule_type is None:
+            raise ValueError(f"Rule {i} missing required field: id or type")
+        if rule_type not in _KNOWN_RULE_TYPES:
+            raise ValueError(
+                f"Rule {i} has unknown type: {rule_type!r}. "
+                f"Known types: {sorted(_KNOWN_RULE_TYPES)}"
+            )
+
+        rules.append(PolicyRule(id=rule_id, type=rule_type, config=rule_config))
+
+    require_resource_registration = bool(data.get("require_resource_registration", False))
+    return Policy(version=str(version), rules=rules, require_resource_registration=require_resource_registration)
+
+
+def get_active_policy() -> Policy:
+    """Return the active policy for this Gateway instance.
+
+    If POLICY_YAML_PATH is set, loads from that file.
+    Otherwise falls back to the built-in demo policy.
+
+    Loading failures raise — the Gateway will not start with a broken
+    policy configuration.
+    """
+    yaml_path = os.environ.get("POLICY_YAML_PATH")
+    if yaml_path:
+        policy = load_policy_from_yaml(yaml_path)
+        logger.info("Loaded policy from YAML: %s (version=%s, rules=%d, hash=%s)",
+                    yaml_path, policy.version, len(policy.rules), policy.policy_hash()[:32])
+        return policy
+    policy = create_demo_policy()
+    logger.info("Using built-in demo policy (version=%s, rules=%d, hash=%s)",
+                policy.version, len(policy.rules), policy.policy_hash()[:32])
+    return policy

@@ -3,7 +3,10 @@
 Uses in-memory mode (no Firestore) for all tests.
 """
 
+import base64
+
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from gateway.resources import ResourceConflict, ResourceRegistry, validate_resource_id
 
@@ -207,3 +210,116 @@ class TestResourceRegistry:
         reg_a.revoke("shared-name")
         assert reg_a.is_registered_and_active("shared-name") is False
         assert reg_b.is_registered_and_active("shared-name") is True
+
+
+class TestResourceRegistrationEnforcement:
+    """Test that require_resource_registration integrates correctly with authorize."""
+
+    def _make_gateway(self, require_registration=False):
+        from gateway.gateway_service import GatewayService
+        from gateway.policy import Policy, PolicyRule
+        from gateway.identity import AgentRegistry
+        policy = Policy(
+            version="1",
+            rules=[
+                PolicyRule(id="allowed_actions", type="allowlist",
+                           config={"allowed_actions": ["read", "query"]}),
+                PolicyRule(id="resource_scope", type="resource_scope",
+                           config={"allowed_resources": ["staging"], "denied_resources": ["prod"]}),
+            ],
+            require_resource_registration=require_registration,
+        )
+        gw = GatewayService(tenant="test", policy=policy)
+        return gw
+
+    def _register_agent(self, gw, agent_id="test-agent"):
+        key = Ed25519PrivateKey.generate()
+        pub_bytes = key.public_key().public_bytes_raw()
+        jwk = {"kty": "OKP", "crv": "Ed25519",
+               "x": base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()}
+        gw._registry.register(agent_id, jwk)
+        return key
+
+    def _make_proof(self, key, agent_id, action, resource):
+        from gateway.identity import create_agent_proof
+        return create_agent_proof(key, agent_id, action, resource)
+
+    def test_permissive_mode_no_registration_needed(self):
+        gw = self._make_gateway(require_registration=False)
+        key = self._register_agent(gw)
+        proof = self._make_proof(key, "test-agent", "read", "staging-db")
+        resp = gw.authorize("test-agent", "read", "staging-db", agent_proof=proof)
+        assert resp.decision == "approve"
+        # resource_registration_id should be None since resource is not registered
+        body = resp.receipt["body"]
+        assert "resource_registration_id" not in body
+
+    def test_permissive_mode_with_registered_resource(self):
+        gw = self._make_gateway(require_registration=False)
+        key = self._register_agent(gw)
+        gw._resource_registry.register("staging-db", display_name="Staging DB")
+        proof = self._make_proof(key, "test-agent", "read", "staging-db")
+        resp = gw.authorize("test-agent", "read", "staging-db", agent_proof=proof)
+        assert resp.decision == "approve"
+        body = resp.receipt["body"]
+        assert body["resource_registration_id"] == "staging-db"
+
+    def test_strict_mode_unregistered_resource_denied(self):
+        gw = self._make_gateway(require_registration=True)
+        key = self._register_agent(gw)
+        proof = self._make_proof(key, "test-agent", "read", "staging-db")
+        resp = gw.authorize("test-agent", "read", "staging-db", agent_proof=proof)
+        assert resp.decision == "deny"
+        assert "RESOURCE_NOT_REGISTERED" in resp.reason_codes
+
+    def test_strict_mode_registered_resource_approved(self):
+        gw = self._make_gateway(require_registration=True)
+        key = self._register_agent(gw)
+        gw._resource_registry.register("staging-db", display_name="Staging DB")
+        proof = self._make_proof(key, "test-agent", "read", "staging-db")
+        resp = gw.authorize("test-agent", "read", "staging-db", agent_proof=proof)
+        assert resp.decision == "approve"
+        body = resp.receipt["body"]
+        assert body["resource_registration_id"] == "staging-db"
+
+    def test_strict_mode_revoked_resource_denied(self):
+        gw = self._make_gateway(require_registration=True)
+        key = self._register_agent(gw)
+        gw._resource_registry.register("staging-db", display_name="Staging DB")
+        gw._resource_registry.revoke("staging-db")
+        proof = self._make_proof(key, "test-agent", "read", "staging-db")
+        resp = gw.authorize("test-agent", "read", "staging-db", agent_proof=proof)
+        assert resp.decision == "deny"
+        assert "RESOURCE_NOT_REGISTERED" in resp.reason_codes
+
+    def test_receipt_chain_integrity_with_mixed_receipts(self):
+        """Verify that receipts with and without resource_registration_id chain correctly."""
+        from gateway.verify import verify_chain
+        gw = self._make_gateway(require_registration=False)
+        key = self._register_agent(gw)
+
+        # Receipt 1: no resource registration
+        proof1 = self._make_proof(key, "test-agent", "read", "staging-db")
+        gw.authorize("test-agent", "read", "staging-db", agent_proof=proof1)
+
+        # Register resource
+        gw._resource_registry.register("staging-db", display_name="Staging DB")
+
+        # Receipt 2: with resource registration
+        from gateway import identity
+        identity._proof_jti_cache.clear()
+        proof2 = self._make_proof(key, "test-agent", "read", "staging-db")
+        gw.authorize("test-agent", "read", "staging-db", agent_proof=proof2)
+
+        # Verify the mixed chain
+        chain = gw.get_receipt_chain()
+        jwk = gw.get_public_key_jwk()
+        result = verify_chain(chain, jwk)
+        assert result.receipt_integrity == "PASS"
+        assert result.chain_validity == "PASS"
+        assert result.errors == []
+
+        # Verify first receipt has no resource_registration_id
+        assert "resource_registration_id" not in chain[0]["body"]
+        # Second receipt has it
+        assert chain[1]["body"]["resource_registration_id"] == "staging-db"
