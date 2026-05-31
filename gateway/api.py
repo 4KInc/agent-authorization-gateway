@@ -12,6 +12,8 @@ Runs alongside the ADK agent, providing direct HTTP access for:
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import time
@@ -583,6 +585,7 @@ class AgentRegisterRequest(BaseModel):
     public_key: dict = Field(..., description="Agent's Ed25519 public key as JWK")
     proof: AgentRegisterProof = Field(..., description="Proof of possession")
     agent_card_url: str | None = Field(None, description="Optional A2A agent card URL for existence verification")
+    live_challenge_url: str | None = Field(None, description="Optional callback URL for signed liveness challenge")
 
 
 async def _verify_agent_card(agent_card_url: str | None, declared_jwk: dict) -> dict:
@@ -621,6 +624,82 @@ async def _verify_agent_card(agent_card_url: str | None, declared_jwk: dict) -> 
     return {"status": "verified", "reason": "card public key matches registered key"}
 
 
+async def _verify_agent_liveness(
+    live_challenge_url: str | None,
+    declared_jwk: dict,
+    agent_id: str,
+    tenant_id: str,
+) -> dict:
+    """POST a fresh nonce to the agent's callback URL and verify it signs
+    the challenge with the private key matching the registered public key."""
+    import secrets as _secrets
+    if not live_challenge_url:
+        return {"status": "skipped", "reason": "no live_challenge_url provided", "challenge_id": None}
+
+    nonce = base64.urlsafe_b64encode(_secrets.token_bytes(32)).rstrip(b"=").decode()
+    challenge_id = base64.urlsafe_b64encode(_secrets.token_bytes(16)).rstrip(b"=").decode()
+    iat = int(time.time())
+
+    challenge_payload = {
+        "v": "1",
+        "type": "agent_liveness_challenge",
+        "tenant_id": tenant_id,
+        "agent_id": agent_id,
+        "nonce": nonce,
+        "challenge_id": challenge_id,
+        "iat": iat,
+    }
+
+    try:
+        headers = {}
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport.requests import Request
+            from urllib.parse import urlparse
+            parsed = urlparse(live_challenge_url)
+            audience = f"{parsed.scheme}://{parsed.netloc}"
+            token = google_id_token.fetch_id_token(Request(), audience)
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception:
+            pass
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(live_challenge_url, json=challenge_payload, headers=headers)
+            if resp.status_code != 200:
+                return {"status": "failed", "reason": f"callback returned {resp.status_code}", "challenge_id": challenge_id}
+            response_data = resp.json()
+    except httpx.TimeoutException:
+        return {"status": "failed", "reason": "callback timeout (>5s)", "challenge_id": challenge_id}
+    except Exception as e:
+        return {"status": "failed", "reason": f"callback error: {type(e).__name__}: {e}", "challenge_id": challenge_id}
+
+    signature_b64 = response_data.get("signature")
+    if not signature_b64:
+        return {"status": "failed", "reason": "callback response missing 'signature' field", "challenge_id": challenge_id}
+
+    # Reconstruct canonical bytes the agent should have signed
+    canonical_bytes = json.dumps(challenge_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    try:
+        sig_padded = signature_b64 + "=" * (-len(signature_b64) % 4)
+        signature = base64.urlsafe_b64decode(sig_padded)
+    except Exception as e:
+        return {"status": "failed", "reason": f"signature decode error: {e}", "challenge_id": challenge_id}
+
+    x_b64 = declared_jwk.get("x", "")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.exceptions import InvalidSignature
+        x_padded = x_b64 + "=" * (-len(x_b64) % 4)
+        pub_bytes = base64.urlsafe_b64decode(x_padded)
+        pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
+        pub_key.verify(signature, canonical_bytes)
+        return {"status": "verified", "reason": "signed challenge response verified", "challenge_id": challenge_id}
+    except InvalidSignature:
+        return {"status": "failed", "reason": "signature does not verify against the registered public key", "challenge_id": challenge_id}
+    except Exception as e:
+        return {"status": "failed", "reason": f"verification error: {e}", "challenge_id": challenge_id}
+
+
 @api_app.post("/agents/register")
 async def register_agent(req: AgentRegisterRequest):
     """Register with proof of possession (step 2 of 2). Replace semantics.
@@ -641,9 +720,13 @@ async def register_agent(req: AgentRegisterRequest):
         raise HTTPException(status, detail=err)
 
     card_result = await _verify_agent_card(req.agent_card_url, req.public_key)
+    live_result = await _verify_agent_liveness(
+        req.live_challenge_url, req.public_key, req.agent_id, gateway.tenant,
+    )
 
     try:
         agent = gateway._registry.register(req.agent_id, req.public_key)
+        from datetime import datetime, timezone
         return {
             "status": "registered",
             "agent_id": agent.agent_id,
@@ -652,6 +735,13 @@ async def register_agent(req: AgentRegisterRequest):
             "agent_card_url": req.agent_card_url,
             "agent_card_verification": card_result["status"],
             "agent_card_verification_reason": card_result.get("reason"),
+            "live_challenge_url": req.live_challenge_url,
+            "live_challenge_verification": live_result["status"],
+            "live_challenge_verification_reason": live_result.get("reason"),
+            "live_challenge_verified_at": (
+                datetime.now(timezone.utc).isoformat()
+                if live_result["status"] == "verified" else None
+            ),
         }
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")

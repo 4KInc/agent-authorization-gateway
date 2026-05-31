@@ -94,6 +94,33 @@ def _jcs(obj):
     if isinstance(obj, dict): return "{" + ",".join(json.dumps(k)+":"+_jcs(obj[k]) for k in sorted(obj.keys())) + "}"
 
 
+class LiveChallengeRequest(BaseModel):
+    v: str
+    type: str
+    tenant_id: str
+    agent_id: str
+    nonce: str
+    challenge_id: str
+    iat: int
+
+
+@app.post("/live-challenge")
+async def live_challenge(challenge: LiveChallengeRequest):
+    """Sign a Gateway liveness challenge with this agent's private key."""
+    if abs(int(time.time()) - challenge.iat) > 60:
+        raise HTTPException(400, "challenge timestamp out of window")
+    if challenge.agent_id != AGENT_NAME:
+        raise HTTPException(400, f"challenge for {challenge.agent_id}, not {AGENT_NAME}")
+
+    canonical = json.dumps(
+        challenge.model_dump(), separators=(",", ":"), sort_keys=True,
+    ).encode("utf-8")
+    signature = PRIVATE_KEY.sign(canonical)
+    sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+
+    return {"signature": sig_b64, "agent_id": AGENT_NAME, "challenge_id": challenge.challenge_id}
+
+
 class AttackRequest(BaseModel):
     action: str = "delete"
     resource: str = "gcp-cloudsql-demo-customers"
@@ -171,9 +198,11 @@ async def register_self(req: RegisterSelfRequest):
         }).encode()
         sig = base64.urlsafe_b64encode(PRIVATE_KEY.sign(msg)).rstrip(b"=").decode()
 
+        challenge_url = f"{SERVICE_URL}/live-challenge" if SERVICE_URL else None
         reg_resp = await client.post(f"{GATEWAY_URL}/agents/register", json={
             "agent_id": AGENT_NAME, "public_key": PUB_JWK,
             "agent_card_url": card_url,
+            "live_challenge_url": challenge_url,
             "proof": {"nonce": ch["nonce"], "challenge_id": ch["challenge_id"], "signature": sig, "iat": iat},
         })
         if reg_resp.status_code != 200:
@@ -187,6 +216,9 @@ async def register_self(req: RegisterSelfRequest):
             "agent_card_verification": result.get("agent_card_verification"),
             "agent_card_verification_reason": result.get("agent_card_verification_reason"),
             "agent_card_url": card_url,
+            "live_challenge_verification": result.get("live_challenge_verification"),
+            "live_challenge_verification_reason": result.get("live_challenge_verification_reason"),
+            "live_challenge_url": challenge_url,
         }
 
 
