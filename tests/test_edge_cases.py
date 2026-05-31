@@ -110,8 +110,12 @@ class TestAdversarialInputs:
         assert result.receipt_integrity == "PASS"
 
     def test_very_long_action_string(self):
+        # A very long action that doesn't exactly match any allowed action should
+        # be denied, but the system must handle it gracefully (no crash, receipt
+        # still signed). Allowlist uses exact match, so "read read read..." != "read".
         r = authorized_call(self.gw, self.agent_key, self.agent_id, "read " * 1000, "staging-db")
-        assert r.decision == "approve"
+        assert r.decision == "deny"
+        assert any("ACTION_NOT_ALLOWED" in code for code in r.reason_codes)
         assert r.receipt_hash.startswith("sha256:")
 
     def test_empty_parameters(self):

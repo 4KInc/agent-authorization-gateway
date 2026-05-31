@@ -22,7 +22,7 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from gateway.identity import create_agent_proof
+from gateway.identity import create_agent_proof, build_registration_message
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 AGENT_ID = "resource-demo-agent"
@@ -53,11 +53,18 @@ def run():
         # Save original policy to restore later
         original_policy = client.get(f"{GATEWAY_URL}/policy").json()
 
-        # Step 1: Register agent
-        step(1, "Register agent identity")
+        # Step 1: Register agent (with proof of possession)
+        step(1, "Register agent identity (PoP)")
+        import time as _t
+        ch = client.post(f"{GATEWAY_URL}/agents/register-challenge", json={"agent_id": AGENT_ID}).json()
+        iat = int(_t.time())
+        msg = build_registration_message("hackathon-demo", AGENT_ID, jwk, ch["nonce"], ch["challenge_id"], iat)
+        sig = agent_key.sign(msg)
+        sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
         resp = client.post(f"{GATEWAY_URL}/agents/register", json={
             "agent_id": AGENT_ID,
             "public_key": jwk,
+            "proof": {"nonce": ch["nonce"], "challenge_id": ch["challenge_id"], "signature": sig_b64, "iat": iat},
         })
         reg = resp.json()
         if resp.status_code == 409:
