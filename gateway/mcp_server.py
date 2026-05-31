@@ -242,34 +242,11 @@ def gateway_verify_receipt(receipt_json: str) -> str:
     return json.dumps(result.to_dict())
 
 
-@mcp.tool()
-def gateway_register_agent(agent_id: str, public_key_jwk: str) -> str:
-    """Register an agent's Ed25519 public key for identity verification.
-
-    After registration, the agent can create DPoP proofs that the Gateway
-    verifies before authorizing actions. This must be called once before
-    the first gateway_authorize_action call.
-
-    Args:
-        agent_id: Unique identifier for the agent.
-        public_key_jwk: JSON string of the agent's Ed25519 public key as JWK.
-    """
-    try:
-        jwk = json.loads(public_key_jwk)
-    except json.JSONDecodeError:
-        return json.dumps({"error": "INVALID_JSON", "detail": "public_key_jwk must be valid JSON"})
-
-    from .identity import AgentAlreadyRegistered
-    gateway = _get_gateway()
-    try:
-        agent = gateway._registry.register(agent_id, jwk, registered_by="mcp-transport")
-        return json.dumps({"status": "registered", "agent_id": agent.agent_id, "kid": agent.kid})
-    except AgentAlreadyRegistered as e:
-        return json.dumps({"error": "AGENT_ALREADY_REGISTERED", "detail": str(e)})
-    except ValueError as e:
-        return json.dumps({"error": "VALIDATION_FAILED", "detail": str(e)})
-    except Exception as e:
-        return json.dumps({"error": "REGISTRATION_FAILED", "detail": str(e)})
+# gateway_register_agent REMOVED — registration is an admin operation that
+# requires proof of possession, enforced only via the REST API endpoint
+# POST /agents/register-challenge + POST /agents/register. The MCP bearer
+# token authenticates the transport but not the caller's identity; allowing
+# register_agent here would bypass PoP.
 
 
 # ============================================================================
@@ -325,15 +302,7 @@ def verify_receipt(receipt_json: str) -> str:
     return gateway_verify_receipt(receipt_json)
 
 
-@mcp.tool()
-def register_agent(agent_id: str, public_key_jwk: str) -> str:
-    """(Alias for gateway_register_agent) Register an agent's Ed25519 public key.
-
-    Args:
-        agent_id: Unique identifier for the agent.
-        public_key_jwk: JSON string of the agent's Ed25519 public key as JWK.
-    """
-    return gateway_register_agent(agent_id, public_key_jwk)
+# register_agent alias REMOVED — see gateway_register_agent removal note above.
 
 
 # ============================================================================
