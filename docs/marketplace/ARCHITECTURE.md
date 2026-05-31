@@ -185,7 +185,7 @@ Registration requires a two-step challenge-response proving the registrant contr
 2. **Agent signs challenge.** The agent builds a canonical message binding the nonce, agent_id, and public key (JCS canonicalization), then signs it with the corresponding Ed25519 private key.
 3. **Agent registers with proof.** `POST /agents/register` with the public key and the signed proof. The Gateway verifies the signature against the submitted public key before accepting the registration.
 
-This prevents registering keys you don't control. All active registrations — including the five system agents — have verified proof of possession.
+This prevents registering keys you don't control. All customer agent registrations go through this flow. The five system agents (Gateway, Auditor, Recommender, Investigator, Coordinator) use deployment-managed identity via Secret Manager with service-specific kid prefixes — they do not register through the agent registry because their signing kids use a different namespace than the registry's `agent-` prefix. Unifying the two namespaces is a v1.0 roadmap item.
 
 ### Authorization Flow
 
@@ -231,7 +231,7 @@ All persistent state is in Cloud Firestore under a per-tenant namespace:
 - **Canonical JSON:** RFC 8785 (JSON Canonicalization Scheme) ensures deterministic byte-level representation for hashing and signing.
 - **Merkle anchoring:** RFC 6962-style Merkle tree over receipt hashes. Roots are periodically anchored to Base L2 mainnet (every 10 receipts or hourly).
 - **DPoP proofs:** RFC 9449-inspired proof of possession. Each authorization request includes a fresh, signed JWT binding the agent's identity to the specific action via `action_digest`.
-- **Key management:** One Secret Manager secret per agent. No ephemeral key generation in production. No key rotation during the current release cycle (v0.4).
+- **Key management:** One Secret Manager secret per system agent (5 total). Customer agents generate and register their own Ed25519 keys via the PoP registration flow. No ephemeral key generation in production. No key rotation during the current release cycle (v0.5).
 
 ## External Dependencies
 

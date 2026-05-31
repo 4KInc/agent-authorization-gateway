@@ -34,8 +34,14 @@ Source: live system at https://agent-auth-gateway-1031148889398.us-central1.run.
 - Unit tests passing: 198/198 (0 failures)
 - Total MCP tools: 22 (17 unique + 5 backward-compat aliases; register_agent removed for PoP enforcement)
 
+## Agent Registry
+- Active customer agent registrations: 0 (agents register on demand via the UI or CLI)
+- System agents (Gateway, Auditor, Recommender, Investigator, Coordinator): NOT in the agent registry. They use deployment-managed identity via Secret Manager with service-specific kid prefixes. This is a different identity namespace from the registry's `agent-` prefix.
+- PoP enforcement: all REST registrations require proof of possession (challenge-response)
+
 ## Security Properties
-- Agent registration: proof of possession required (challenge-response with Ed25519 signature)
+- Customer agent registration: proof of possession required (challenge-response with Ed25519 signature)
+- System agent identity: deployment-managed via Secret Manager (service-specific kid prefixes)
 - MCP register_agent: removed — PoP bypass closed
 - Authorization: DPoP proof required for every request (30s freshness, JTI replay prevention, action_digest binding)
 - Receipts: Ed25519-signed, hash-chained, Merkle-anchored to Base L2 mainnet
