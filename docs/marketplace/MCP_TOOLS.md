@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-The Agent Authorization Gateway exposes a unified MCP server with 18 unique tools (plus 6 backward-compatibility aliases) spanning all five agents in the system. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning.
+The Agent Authorization Gateway exposes a unified MCP server with 17 unique tools (plus 5 backward-compatibility aliases, 22 total) spanning all five agents in the system. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning. Agent registration is not available via MCP — it requires proof of possession, enforced only via the REST API.
 
 **Endpoint**: `https://agent-auth-gateway-mcp-1031148889398.us-central1.run.app/mcp`
 **Auth**: Bearer token (`Authorization: Bearer <MCP_AUTH_TOKEN>`)
@@ -27,9 +27,9 @@ asyncio.run(main())
 
 ---
 
-## Gateway Tools (6)
+## Gateway Tools (5)
 
-In-process tools for authorization, identity, and receipt verification.
+In-process tools for authorization and receipt verification. Agent registration requires proof of possession and is available only via the REST API (`POST /agents/register-challenge` + `POST /agents/register`).
 
 ### `gateway_authorize_action`
 
@@ -42,15 +42,6 @@ Evaluate an AI agent's intended action against a security policy. Returns an aut
 | `resource` | string | yes | Target resource (e.g., "staging-database") |
 | `agent_proof` | string | yes | DPoP-style proof JWT signed by the agent's Ed25519 key |
 | `parameters` | string | no | JSON string of action-specific parameters |
-
-### `gateway_register_agent`
-
-Register an agent's Ed25519 public key for identity verification. Must be called once before the first `gateway_authorize_action` call. MCP registration is authenticated via transport-level bearer token; REST registration additionally requires proof of possession (challenge-response).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | string | yes | Unique identifier for the agent |
-| `public_key_jwk` | string | yes | JSON string of the agent's Ed25519 public key as JWK |
 
 ### `gateway_verify_receipt`
 
@@ -200,17 +191,16 @@ Register a new agent by its A2A agent card URL. The Coordinator fetches the card
 
 ---
 
-## Backward-Compatibility Aliases (6)
+## Backward-Compatibility Aliases (5)
 
 These aliases preserve the original tool names for existing MCP clients:
 
 | Alias | Delegates to |
 |-------|-------------|
 | `authorize_action` | `gateway_authorize_action` |
-| `register_agent` | `gateway_register_agent` |
 | `verify_receipt` | `gateway_verify_receipt` |
 | `get_chain_stats` | `gateway_get_chain_stats` |
 | `get_receipt_chain` | `gateway_get_receipt_chain` |
 | `get_public_key` | `gateway_get_public_key` |
 
-Existing clients calling `authorize_action` continue to work without changes.
+`register_agent` was removed from MCP to enforce proof of possession. Use the REST API for agent registration.

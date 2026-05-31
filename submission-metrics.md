@@ -1,48 +1,53 @@
 # Current Submission Metrics
 
-Captured: 2026-05-31
+Captured: 2026-05-31T05:55Z
 Source: live system at https://agent-auth-gateway-1031148889398.us-central1.run.app
 
 ## Receipts
-- Total signed receipts: 106 (seq 18-123)
-- Approvals: 61
-- Denials: 45
+- Total signed receipts: 110 (Firestore, tenant hackathon-demo)
+- Approvals: 63
+- Denials: 47
 - Unique agents seen: 13
-- Chain integrity: PASS (individual receipts); partial chain starts at seq 18
+- Chain integrity: PASS (Merkle root: sha256:c685b49a...)
 
 ## Audit Reports
-- Total audit reports: 345
+- Total audit reports: 200+ (capped by API limit)
 - Breakdown by verdict:
-  - ALIGNED: 246+
-  - CONFLICT: 12+
-  - INSUFFICIENT_EVIDENCE: 13+
-  - ERROR: 2+
-- Latest audit report timestamp: 2026-05-29T21:43:54.530249+00:00
+  - ALIGNED: 175
+  - CONFLICT: 12
+  - INSUFFICIENT_EVIDENCE: 12
+  - ERROR: 1
 
 ## Compliance Citations
-- Total citations across audit reports: 519+
+- Total citations across audit reports: 358
 - By framework:
-  - NIST SP 800-53: 314+
-  - OWASP NHI Top 10: 191+
-  - NIST AI RMF: 14+
+  - NIST SP 800-53: 213
+  - OWASP NHI Top 10: 132
+  - NIST AI RMF: 13
 
 ## Other Artifacts
-- Policy proposals: 1
-- Incident reports: 4
+- Policy proposals: 3
+- Incident reports: 5
 - Registered agents in Coordinator directory: 4 (1 real + 3 synthetic)
-- Registered resources: 23 (migrated from receipt chain)
+- Registered resources: 23
 - Cloud Run services deployed: 10 (agent-auth-*)
-- Unit tests passing: 198
-- Total MCP tools: 22
+- Unit tests passing: 198/198 (0 failures)
+- Total MCP tools: 22 (17 unique + 5 backward-compat aliases; register_agent removed for PoP enforcement)
+
+## Security Properties
+- Agent registration: proof of possession required (challenge-response with Ed25519 signature)
+- MCP register_agent: removed — PoP bypass closed
+- Authorization: DPoP proof required for every request (30s freshness, JTI replay prevention, action_digest binding)
+- Receipts: Ed25519-signed, hash-chained, Merkle-anchored to Base L2 mainnet
 
 ## Cloud Run Services
-1. agent-auth-demo-ui (dashboard)
+1. agent-auth-demo-ui (dashboard + interactive demo)
 2. agent-auth-gateway (REST API)
 3. agent-auth-gateway-a2a (A2A protocol)
 4. agent-auth-gateway-adk (ADK agent)
 5. agent-auth-gateway-auditor (Policy Auditor)
 6. agent-auth-gateway-coordinator (Discovery Coordinator)
-7. agent-auth-gateway-mcp (MCP server)
+7. agent-auth-gateway-mcp (MCP server, 22 tools)
 8. agent-auth-gateway-recommender (Policy Recommender)
 9. agent-auth-gateway-resource (Protected Resource demo)
 10. agent-auth-investigator (Investigation Agent)
