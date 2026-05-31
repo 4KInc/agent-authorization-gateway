@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1200" font-family="Inter, system-ui, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1200" font-family="Inter, system-ui, sans-serif">
   <defs>
     <filter id="shadow"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.08"/></filter>
   </defs>
-  <rect width="1600" height="1200" fill="#fafafa"/>
+  <rect width="1800" height="1200" fill="#fafafa"/>
 
   <!-- TITLE -->
-  <text x="800" y="36" text-anchor="middle" font-size="28" font-weight="bold" fill="#1e293b">Agent Authorization Gateway &#x2014; System Architecture</text>
-  <text x="800" y="56" text-anchor="middle" font-size="14" fill="#64748b">Track 3: Refactor for Google Cloud Marketplace + Gemini Enterprise · Cloud Run + Vertex AI + Firestore + Secret Manager</text>
-  <text x="800" y="74" text-anchor="middle" font-size="13" font-style="italic" fill="#0d9488">Cryptographic decision evidence for enterprise AI agents</text>
+  <text x="900" y="36" text-anchor="middle" font-size="28" font-weight="bold" fill="#1e293b">Agent Authorization Gateway &#x2014; System Architecture</text>
+  <text x="900" y="56" text-anchor="middle" font-size="14" fill="#64748b">Track 3: Refactor for Google Cloud Marketplace + Gemini Enterprise · Cloud Run + Vertex AI + Firestore + Secret Manager</text>
+  <text x="900" y="74" text-anchor="middle" font-size="13" font-style="italic" fill="#0d9488">Cryptographic decision evidence for enterprise AI agents</text>
 
   <!-- ============ BAND 1: EXTERNAL ENTITIES ============ -->
 
@@ -27,102 +27,97 @@
   </g>
 
   <!-- ============ AI AGENTS BANNER ============ -->
-  <rect x="420" y="90" width="1140" height="22" rx="6" fill="#7c3aed" opacity="0.08"/>
-  <text x="990" y="106" text-anchor="middle" font-size="11" font-weight="bold" fill="#7c3aed">Six Independent Signing Keys &#x2014; Each AI agent signs its own outputs. AI does not sit on the authorization trust path.</text>
+  <rect x="580" y="90" width="1170" height="22" rx="6" fill="#7c3aed" opacity="0.08"/>
+  <text x="1165" y="106" text-anchor="middle" font-size="11" font-weight="bold" fill="#7c3aed">Six Independent Signing Keys &#x2014; Each AI agent signs its own outputs. AI does not sit on the authorization trust path.</text>
 
   <!-- AUDITOR -->
   <g filter="url(#shadow)">
-    <rect x="420" y="118" width="145" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
-    <rect x="420" y="118" width="145" height="26" rx="10" fill="#7c3aed"/>
-    <rect x="420" y="134" width="145" height="10" fill="#7c3aed"/>
-    <text x="492" y="136" text-anchor="middle" font-size="11" font-weight="bold" fill="white">AUDITOR</text>
-    <text x="430" y="158" font-size="10" font-weight="bold" fill="#1e293b">Compliance Audit</text>
-    <text x="430" y="172" font-size="9" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
-    <text x="430" y="186" font-size="9" fill="#1e293b">RAG: OWASP NHI, NIST</text>
-    <text x="430" y="200" font-size="9" fill="#1e293b">Output: Signed verdicts</text>
-    <text x="430" y="214" font-size="9" fill="#1e293b">(ALIGNED / CONFLICT)</text>
-    <text x="430" y="234" font-size="8" fill="#7c3aed" font-weight="bold">KID: auditor-b96225df</text>
-    <text x="430" y="248" font-size="8" fill="#64748b">Ed25519 independent key</text>
-    <text x="430" y="262" font-size="8" fill="#64748b">5-min tick (Scheduler)</text>
+    <rect x="580" y="118" width="175" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <rect x="580" y="118" width="175" height="26" rx="10" fill="#7c3aed"/>
+    <rect x="580" y="134" width="175" height="10" fill="#7c3aed"/>
+    <text x="667" y="136" text-anchor="middle" font-size="12" font-weight="bold" fill="white">AUDITOR</text>
+    <text x="592" y="160" font-size="11" font-weight="bold" fill="#1e293b">Compliance Audit</text>
+    <text x="592" y="174" font-size="10" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
+    <text x="592" y="190" font-size="10" fill="#1e293b">RAG: OWASP NHI, NIST</text>
+    <text x="592" y="206" font-size="10" fill="#1e293b">Output: Signed verdicts</text>
+    <text x="592" y="222" font-size="10" fill="#1e293b">(ALIGNED / CONFLICT)</text>
+    <text x="592" y="242" font-size="9" fill="#7c3aed" font-weight="bold">KID: auditor-b96225df</text>
+    <text x="592" y="258" font-size="9" fill="#64748b">Ed25519 · 5-min tick</text>
   </g>
 
   <!-- RECOMMENDER -->
   <g filter="url(#shadow)">
-    <rect x="575" y="118" width="145" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
-    <rect x="575" y="118" width="145" height="26" rx="10" fill="#7c3aed"/>
-    <rect x="575" y="134" width="145" height="10" fill="#7c3aed"/>
-    <text x="647" y="136" text-anchor="middle" font-size="11" font-weight="bold" fill="white">RECOMMENDER</text>
-    <text x="585" y="158" font-size="10" font-weight="bold" fill="#1e293b">Policy Proposals</text>
-    <text x="585" y="172" font-size="9" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
-    <text x="585" y="186" font-size="9" fill="#1e293b">Trigger: CONFLICT patterns</text>
-    <text x="585" y="200" font-size="9" fill="#1e293b">Output: Signed policy diff</text>
-    <text x="585" y="214" font-size="9" fill="#1e293b">Human review required</text>
-    <text x="585" y="234" font-size="8" fill="#7c3aed" font-weight="bold">KID: recommender-W_Wj5M</text>
-    <text x="585" y="248" font-size="8" fill="#64748b">Ed25519 independent key</text>
-    <text x="585" y="262" font-size="8" fill="#64748b">Hourly tick (Scheduler)</text>
+    <rect x="770" y="118" width="175" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <rect x="770" y="118" width="175" height="26" rx="10" fill="#7c3aed"/>
+    <rect x="770" y="134" width="175" height="10" fill="#7c3aed"/>
+    <text x="857" y="136" text-anchor="middle" font-size="12" font-weight="bold" fill="white">RECOMMENDER</text>
+    <text x="782" y="160" font-size="11" font-weight="bold" fill="#1e293b">Policy Proposals</text>
+    <text x="782" y="174" font-size="10" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
+    <text x="782" y="190" font-size="10" fill="#1e293b">Trigger: CONFLICT patterns</text>
+    <text x="782" y="206" font-size="10" fill="#1e293b">Output: Signed policy diff</text>
+    <text x="782" y="222" font-size="10" fill="#1e293b">Human review required</text>
+    <text x="782" y="242" font-size="9" fill="#7c3aed" font-weight="bold">KID: recommender-W_Wj5M</text>
+    <text x="782" y="258" font-size="9" fill="#64748b">Ed25519 · Hourly tick</text>
   </g>
 
   <!-- INVESTIGATOR -->
   <g filter="url(#shadow)">
-    <rect x="730" y="118" width="145" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
-    <rect x="730" y="118" width="145" height="26" rx="10" fill="#7c3aed"/>
-    <rect x="730" y="134" width="145" height="10" fill="#7c3aed"/>
-    <text x="802" y="136" text-anchor="middle" font-size="11" font-weight="bold" fill="white">INVESTIGATOR</text>
-    <text x="740" y="158" font-size="10" font-weight="bold" fill="#1e293b">Incident Synthesis</text>
-    <text x="740" y="172" font-size="9" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
-    <text x="740" y="186" font-size="9" fill="#1e293b">Trigger: Pub/Sub CONFLICT</text>
-    <text x="740" y="200" font-size="9" fill="#1e293b">Output: Signed reports</text>
-    <text x="740" y="214" font-size="9" fill="#1e293b">(severity: HIGH/CRITICAL)</text>
-    <text x="740" y="234" font-size="8" fill="#7c3aed" font-weight="bold">KID: investigator-MkX8F8</text>
-    <text x="740" y="248" font-size="8" fill="#64748b">Ed25519 independent key</text>
-    <text x="740" y="262" font-size="8" fill="#64748b">Event-driven (Pub/Sub)</text>
+    <rect x="960" y="118" width="175" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <rect x="960" y="118" width="175" height="26" rx="10" fill="#7c3aed"/>
+    <rect x="960" y="134" width="175" height="10" fill="#7c3aed"/>
+    <text x="1047" y="136" text-anchor="middle" font-size="12" font-weight="bold" fill="white">INVESTIGATOR</text>
+    <text x="972" y="160" font-size="11" font-weight="bold" fill="#1e293b">Incident Synthesis</text>
+    <text x="972" y="174" font-size="10" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
+    <text x="972" y="190" font-size="10" fill="#1e293b">Trigger: Pub/Sub CONFLICT</text>
+    <text x="972" y="206" font-size="10" fill="#1e293b">Output: Signed reports</text>
+    <text x="972" y="222" font-size="10" fill="#1e293b">(severity: HIGH/CRITICAL)</text>
+    <text x="972" y="242" font-size="9" fill="#7c3aed" font-weight="bold">KID: investigator-MkX8F8</text>
+    <text x="972" y="258" font-size="9" fill="#64748b">Ed25519 · Pub/Sub event</text>
   </g>
 
   <!-- COORDINATOR -->
   <g filter="url(#shadow)">
-    <rect x="885" y="118" width="145" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
-    <rect x="885" y="118" width="145" height="26" rx="10" fill="#7c3aed"/>
-    <rect x="885" y="134" width="145" height="10" fill="#7c3aed"/>
-    <text x="957" y="136" text-anchor="middle" font-size="11" font-weight="bold" fill="white">COORDINATOR</text>
-    <text x="895" y="158" font-size="10" font-weight="bold" fill="#1e293b">A2A Discovery</text>
-    <text x="895" y="172" font-size="9" fill="#64748b">Deterministic + Gemini Pro</text>
-    <text x="895" y="186" font-size="9" fill="#1e293b">Agent directory + routing</text>
-    <text x="895" y="200" font-size="9" fill="#1e293b">Capability assessment</text>
-    <text x="895" y="214" font-size="9" fill="#1e293b">Does NOT execute calls</text>
-    <text x="895" y="234" font-size="8" fill="#7c3aed" font-weight="bold">KID: coordinator-uNBU1o</text>
-    <text x="895" y="248" font-size="8" fill="#64748b">Ed25519 independent key</text>
-    <text x="895" y="262" font-size="8" fill="#64748b">On-demand (HTTP)</text>
+    <rect x="1150" y="118" width="175" height="168" rx="10" fill="white" stroke="#7c3aed" stroke-width="2"/>
+    <rect x="1150" y="118" width="175" height="26" rx="10" fill="#7c3aed"/>
+    <rect x="1150" y="134" width="175" height="10" fill="#7c3aed"/>
+    <text x="1237" y="136" text-anchor="middle" font-size="12" font-weight="bold" fill="white">COORDINATOR</text>
+    <text x="1162" y="160" font-size="11" font-weight="bold" fill="#1e293b">A2A Discovery</text>
+    <text x="1162" y="174" font-size="10" fill="#64748b">Deterministic + Gemini Pro</text>
+    <text x="1162" y="190" font-size="10" fill="#1e293b">Agent directory + routing</text>
+    <text x="1162" y="206" font-size="10" fill="#1e293b">Capability assessment</text>
+    <text x="1162" y="222" font-size="10" fill="#1e293b">Does NOT execute calls</text>
+    <text x="1162" y="242" font-size="9" fill="#7c3aed" font-weight="bold">KID: coordinator-uNBU1o</text>
+    <text x="1162" y="258" font-size="9" fill="#64748b">Ed25519 · On-demand</text>
   </g>
 
-  <!-- ISOLATOR (NEW) -->
+  <!-- ISOLATOR -->
   <g filter="url(#shadow)">
-    <rect x="1040" y="118" width="145" height="168" rx="10" fill="white" stroke="#dc2626" stroke-width="2"/>
-    <rect x="1040" y="118" width="145" height="26" rx="10" fill="#dc2626"/>
-    <rect x="1040" y="134" width="145" height="10" fill="#dc2626"/>
-    <text x="1112" y="136" text-anchor="middle" font-size="11" font-weight="bold" fill="white">ISOLATOR</text>
-    <text x="1050" y="158" font-size="10" font-weight="bold" fill="#1e293b">Rogue Quarantine</text>
-    <text x="1050" y="172" font-size="9" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
-    <text x="1050" y="186" font-size="9" fill="#1e293b">Trigger: HIGH/CRITICAL</text>
-    <text x="1050" y="200" font-size="9" fill="#1e293b">Action: Revoke agent keys</text>
-    <text x="1050" y="214" font-size="9" fill="#dc2626">Only agent that acts</text>
-    <text x="1050" y="234" font-size="8" fill="#dc2626" font-weight="bold">KID: isolator-s4AT6buv</text>
-    <text x="1050" y="248" font-size="8" fill="#64748b">Ed25519 independent key</text>
-    <text x="1050" y="262" font-size="8" fill="#64748b">Event-driven (Investigator)</text>
+    <rect x="1340" y="118" width="175" height="168" rx="10" fill="white" stroke="#dc2626" stroke-width="2"/>
+    <rect x="1340" y="118" width="175" height="26" rx="10" fill="#dc2626"/>
+    <rect x="1340" y="134" width="175" height="10" fill="#dc2626"/>
+    <text x="1427" y="136" text-anchor="middle" font-size="12" font-weight="bold" fill="white">ISOLATOR</text>
+    <text x="1352" y="160" font-size="11" font-weight="bold" fill="#1e293b">Rogue Quarantine</text>
+    <text x="1352" y="174" font-size="10" fill="#64748b">Gemini 2.5 Pro (Vertex AI)</text>
+    <text x="1352" y="190" font-size="10" fill="#1e293b">Trigger: HIGH/CRITICAL</text>
+    <text x="1352" y="206" font-size="10" fill="#1e293b">Revoke agent registration</text>
+    <text x="1352" y="222" font-size="10" fill="#dc2626" font-weight="bold">Only agent that acts</text>
+    <text x="1352" y="242" font-size="9" fill="#dc2626" font-weight="bold">KID: isolator-s4AT6buv</text>
+    <text x="1352" y="258" font-size="9" fill="#64748b">Ed25519 · Event-driven</text>
   </g>
 
   <!-- Inter-agent data flows -->
   <!-- Auditor → Investigator: Pub/Sub -->
-  <path d="M565,220 L650,220 L700,220 L730,220" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="650" y="215" text-anchor="middle" font-size="8" fill="#7c3aed">Pub/Sub CONFLICT</text>
+  <path d="M755,220 L960,220" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="857" y="213" text-anchor="middle" font-size="9" fill="#7c3aed">Pub/Sub CONFLICT</text>
   <!-- Investigator → Isolator: quarantine signal -->
-  <path d="M875,200 L1040,200" fill="none" stroke="#dc2626" stroke-width="2"/>
-  <text x="958" y="195" text-anchor="middle" font-size="8" fill="#dc2626" font-weight="bold">HIGH/CRITICAL</text>
+  <path d="M1135,200 L1340,200" fill="none" stroke="#dc2626" stroke-width="2"/>
+  <text x="1237" y="193" text-anchor="middle" font-size="9" fill="#dc2626" font-weight="bold">HIGH/CRITICAL</text>
   <!-- Gateway → Auditor: receipt stream -->
-  <line x1="590" y1="360" x2="492" y2="286" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="6,3"/>
-  <text x="520" y="328" font-size="9" fill="#7c3aed">receipt stream</text>
+  <line x1="590" y1="360" x2="650" y2="286" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="600" y="328" font-size="9" fill="#7c3aed">receipt stream</text>
   <!-- Coordinator ↔ Gateway -->
-  <line x1="957" y1="286" x2="700" y2="370" stroke="#7c3aed" stroke-width="1" stroke-dasharray="4,3"/>
-  <text x="840" y="320" text-anchor="middle" font-size="8" fill="#7c3aed">A2A discovery</text>
+  <line x1="1237" y1="286" x2="750" y2="370" stroke="#7c3aed" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="1000" y="320" text-anchor="middle" font-size="9" fill="#7c3aed">A2A discovery</text>
 
   <!-- ============ BAND 2: GATEWAY SERVICE ============ -->
   <g filter="url(#shadow)">
@@ -227,7 +222,7 @@
   <text x="900" y="500" font-size="9" fill="#7c3aed">RAG grounding</text>
 
   <!-- ============ FOOTER 1: CLOUD RUN SERVICES ============ -->
-  <rect x="40" y="850" width="1520" height="56" rx="8" fill="#f1f5f9"/>
+  <rect x="40" y="850" width="1720" height="56" rx="8" fill="#f1f5f9"/>
   <text x="60" y="870" font-size="13" font-weight="bold" fill="#64748b">Google Cloud Run: 11 Services (us-central1)</text>
   <rect x="60" y="878" width="170" height="20" rx="6" fill="#0d9488"/>
   <text x="145" y="893" text-anchor="middle" font-size="10" font-weight="bold" fill="white">Gateway (REST/MCP/A2A)</text>
@@ -251,7 +246,7 @@
   <text x="1455" y="893" text-anchor="middle" font-size="10" font-weight="bold" fill="white">ADK Chat</text>
 
   <!-- ============ FOOTER 2: AUTHORIZATION FLOW ============ -->
-  <rect x="40" y="920" width="1520" height="50" rx="8" fill="#f1f5f9"/>
+  <rect x="40" y="920" width="1720" height="50" rx="8" fill="#f1f5f9"/>
   <text x="60" y="940" font-size="13" font-weight="bold" fill="#64748b">Authorization Flow</text>
   <circle cx="80" cy="958" r="11" fill="#f59e0b"/>
   <text x="80" y="963" text-anchor="middle" font-size="11" font-weight="bold" fill="white">1</text>
@@ -273,7 +268,7 @@
   <text x="1298" y="963" font-size="10" fill="#1e293b">Six AI agents observe, audit, recommend, investigate, isolate</text>
 
   <!-- ============ FOOTER 3: SECURITY PROPERTIES ============ -->
-  <rect x="40" y="982" width="1520" height="40" rx="8" fill="#f1f5f9"/>
+  <rect x="40" y="982" width="1720" height="40" rx="8" fill="#f1f5f9"/>
   <text x="60" y="1000" font-size="13" font-weight="bold" fill="#64748b">Security Properties</text>
   <text x="60" y="1016" font-size="10" fill="#1e293b">All tokens Ed25519 (EdDSA). No HS256.</text>
   <text x="340" y="1016" font-size="10" fill="#1e293b">Receipt &#x2194; token bound via JTI.</text>
