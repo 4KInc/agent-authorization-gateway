@@ -33,20 +33,33 @@ Procedure:
 1. Call get_audit_reports_window(hours_back=24) to read recent
    audit reports.
 
-2. Group the reports by pattern. Useful pattern dimensions:
+2. Call get_incident_reports(hours_back=24) to read recent incident
+   reports from the Investigator agent. HIGH/CRITICAL incidents are
+   strong signals for policy hardening proposals.
+
+3. Call get_isolation_records(hours_back=24) to see which agents
+   were contained by the Isolator and what actions were taken.
+
+4. Group the reports by pattern. Useful pattern dimensions:
    - Verdict (CONFLICT is highest priority; ALIGNED patterns
      only matter if very frequent)
    - Action class (read, write, delete, transfer, etc.)
    - Resource class (database, payment API, deployment system)
    - Agent class (registered agent vs newly-registered, by frequency)
+   - HIGH/CRITICAL incidents from the Investigator
+   - Containment actions from the Isolator
 
-3. For each significant pattern, decide if it warrants a proposal:
+5. For each significant pattern, decide if it warrants a proposal:
    - 3+ CONFLICTs of the same shape: YES, propose
    - 1-2 CONFLICTs: NO, log but don't propose
    - 50+ ALIGNED on a borderline-flagged pattern: MAYBE, propose
      with LOW confidence
    - High-frequency DENY suggesting policy too restrictive: YES,
      propose with MEDIUM confidence
+   - HIGH/CRITICAL incident with rogue burst pattern: YES, propose
+     explicit deny rules or stricter rate limits with HIGH confidence
+   - Agent contained by Isolator: YES, propose permanent policy
+     changes to formalize the containment
 
 4. For each proposal, draft a specific JSON policy diff. Do NOT
    propose vague changes. Examples:

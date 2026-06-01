@@ -73,4 +73,50 @@ def make_adk_tools(db: firestore.Client, tenant: str):
             return json.dumps({"error": str(e)})
         return json.dumps([p.get("body", {}) for p in proposals], default=str)
 
-    return [FunctionTool(get_audit_reports_window), FunctionTool(get_recent_proposals)]
+    def get_incident_reports(hours_back: int = 24) -> str:
+        """Fetch incident reports from the Investigator agent from the last N hours.
+        Returns a JSON array of incident report bodies with severity, timeline,
+        agents_involved, recommended_actions, etc.
+
+        HIGH and CRITICAL severity incidents are strong signals for policy changes.
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+            collection = db.collection("tenants").document(tenant).collection("incident_reports")
+            reports = []
+            for doc in collection.stream():
+                data = doc.to_dict()
+                body = data.get("body", {})
+                if body.get("created_at", body.get("investigated_at", "")) >= cutoff:
+                    reports.append(body)
+            reports.sort(key=lambda r: r.get("created_at", r.get("investigated_at", "")))
+            return json.dumps(reports, default=str)
+        except Exception as e:
+            logger.warning("Failed to fetch incident reports: %s", e)
+            return json.dumps({"error": str(e)})
+
+    def get_isolation_records(hours_back: int = 24) -> str:
+        """Fetch isolation/containment records from the Isolator agent from the last N hours.
+        Returns a JSON array showing which agents were contained and what actions were taken.
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+            reports = []
+            for t in [tenant, "default"]:
+                collection = db.collection("tenants").document(t).collection("isolation_records")
+                for doc in collection.stream():
+                    data = doc.to_dict()
+                    body = data.get("body", data)
+                    if body.get("isolated_at", "") >= cutoff:
+                        reports.append(body)
+            return json.dumps(reports, default=str)
+        except Exception as e:
+            logger.warning("Failed to fetch isolation records: %s", e)
+            return json.dumps({"error": str(e)})
+
+    return [
+        FunctionTool(get_audit_reports_window),
+        FunctionTool(get_recent_proposals),
+        FunctionTool(get_incident_reports),
+        FunctionTool(get_isolation_records),
+    ]
