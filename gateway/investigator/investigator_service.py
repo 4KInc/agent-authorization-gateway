@@ -120,11 +120,43 @@ async def investigate(request: Request):
 
         logger.info("Incident report created: id=%s severity=%s tenant=%s",
                     incident_id, severity, tenant)
+
+        # Notify Isolator on HIGH/CRITICAL incidents
+        isolator_result = None
+        if severity in ("HIGH", "CRITICAL"):
+            import httpx
+            isolator_url = os.environ.get("ISOLATOR_URL", "https://agent-auth-isolator-1031148889398.us-central1.run.app")
+            try:
+                headers = {}
+                try:
+                    from google.oauth2 import id_token as google_id_token
+                    from google.auth.transport.requests import Request
+                    from urllib.parse import urlparse
+                    parsed = urlparse(isolator_url)
+                    audience = f"{parsed.scheme}://{parsed.netloc}"
+                    token = google_id_token.fetch_id_token(Request(), audience)
+                    headers["Authorization"] = f"Bearer {token}"
+                except Exception:
+                    pass
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        f"{isolator_url}/isolate",
+                        json={"tenant": tenant, "incident": envelope},
+                        headers=headers,
+                    )
+                    isolator_result = resp.json() if resp.status_code == 200 else {"error": resp.status_code}
+                    logger.info("Isolator notified: %s", isolator_result)
+            except Exception as e:
+                logger.warning("Isolator notification failed: %s", e)
+                isolator_result = {"error": str(e)}
+
         return {
             "incident_id": incident_id,
             "severity": severity,
             "tenant": tenant,
             "trigger": trigger,
+            "isolator_triggered": severity in ("HIGH", "CRITICAL"),
+            "isolator_result": isolator_result,
         }
 
     except Exception:

@@ -8,8 +8,10 @@ RUN pip install --no-cache-dir \
     google-cloud-pubsub \
     google-adk \
     google-genai \
+    google-auth \
     fastapi \
     uvicorn \
+    httpx \
     cryptography \
     pydantic
 
