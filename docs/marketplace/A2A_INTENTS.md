@@ -2,7 +2,7 @@
 
 ## Overview
 
-Gate is A2A-native. The Gateway publishes an A2A agent card and exposes four skills via the Google A2A SDK (v1.1.0). Other agents in the ecosystem (Auditor, Recommender, Investigator, Coordinator) expose REST APIs but do not currently publish A2A agent cards — their integration into the A2A protocol surface is a v1.0 roadmap item.
+Gate is A2A-native. The Gateway publishes an A2A agent card and exposes four skills via the Google A2A SDK (v1.1.0). All five agents in the ecosystem now publish A2A agent cards consolidated into their REST service URLs — there are no separate `-a2a` Cloud Run services for the AI agents. The Isolator does not yet publish an A2A agent card.
 
 This document enumerates every skill and endpoint across all five agents, their input/output schemas, and the authentication requirements for each.
 
@@ -11,10 +11,11 @@ This document enumerates every skill and endpoint across all five agents, their 
 | Agent | A2A Card | Status |
 |---|---|---|
 | Gateway | `https://agent-auth-gateway-a2a-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
-| Auditor | — | REST-only (v1.0 roadmap) |
-| Recommender | — | REST-only (v1.0 roadmap) |
-| Investigator | — | REST-only (v1.0 roadmap) |
-| Coordinator | — | REST-only (v1.0 roadmap) |
+| Auditor | `https://agent-auth-gateway-auditor-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
+| Recommender | `https://agent-auth-gateway-recommender-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
+| Investigator | `https://agent-auth-investigator-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
+| Coordinator | `https://agent-auth-gateway-coordinator-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
+| Isolator | — | REST-only |
 
 The Gateway's agent card declares version `0.4.0`, supports text input/output modes, and lists four skills.
 
@@ -303,7 +304,7 @@ Freshness window: 30 seconds. JTI replay prevention: in-memory cache per gateway
 
 Agents that interoperate with Gate must:
 
-1. **Generate an Ed25519 keypair** (one-time) and register the public key with the Gateway via the two-step `POST /agents/register-challenge` + `POST /agents/register` flow. Registration requires proof of possession — the registrant must sign a challenge nonce with the corresponding private key. (`register_agent` was removed from the MCP tool surface to enforce PoP uniformly.)
+1. **Generate an Ed25519 keypair** (one-time) and register the public key with the Gateway via the two-step challenge-response flow: `POST /agents/register-challenge` returns a nonce, and `POST /agents/register` requires a signature over that nonce (proof of possession). This PoP requirement is enforced uniformly — registration is not available through a single-step MCP tool call. (`register_agent` was removed from the MCP tool surface for this reason.)
 2. **Produce DPoP proofs** per the profile documented in [docs/protocol.md](../protocol.md) for every `authorize_action` call. The `action_digest` must be computed using RFC 8785 JCS canonicalization.
 3. **Verify Gate's signed responses** using Gate's published public keys from `/keys` or `get_public_key`.
 4. **Handle token error conditions:** expired (60-second TTL), wrong audience, action_digest mismatch, and replay (JTI reuse).

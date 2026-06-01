@@ -790,6 +790,7 @@ class ActionRegisterRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=256)
     description: str = ""
     risk_level: RiskLevel = Field(..., description="Risk classification")
+    resource_type: ResourceType = Field(..., description="Resource type this action applies to")
     requires_human_approval: bool = False
     metadata: dict | None = None
 
@@ -803,13 +804,14 @@ async def register_action(req: ActionRegisterRequest, request: Request):
         result = registry.register(
             action_id=req.action_id,
             display_name=req.display_name,
+            resource_type=req.resource_type.value,
             description=req.description,
             risk_level=req.risk_level.value,
             requires_human_approval=req.requires_human_approval,
             registered_by=caller or "anonymous",
             metadata=req.metadata,
         )
-        return {"status": "registered", **{k: result[k] for k in ("action_id", "display_name", "risk_level", "version", "registered_at")}}
+        return {"status": "registered", **{k: result[k] for k in ("action_id", "resource_type", "display_name", "risk_level", "version", "registered_at")}}
     except ActionConflict as e:
         raise HTTPException(409, str(e))
     except ValueError as e:
@@ -817,18 +819,22 @@ async def register_action(req: ActionRegisterRequest, request: Request):
 
 
 @api_app.get("/actions")
-async def list_actions(include_revoked: bool = False, limit: int = 100):
-    """List registered actions."""
+async def list_actions(
+    resource_type: str | None = None,
+    include_revoked: bool = False,
+    limit: int = 100,
+):
+    """List registered actions, optionally filtered by resource_type."""
     registry = _get_action_registry()
-    actions = registry.list_all(include_revoked=include_revoked, limit=limit)
+    actions = registry.list_all(include_revoked=include_revoked, limit=limit, resource_type=resource_type)
     return {"actions": actions, "count": len(actions)}
 
 
 @api_app.get("/actions/{action_id:path}")
-async def get_action(action_id: str, include_revoked: bool = False):
-    """Get a specific action by ID."""
+async def get_action(action_id: str, resource_type: str | None = None, include_revoked: bool = False):
+    """Get a specific action by ID, optionally scoped to a resource_type."""
     registry = _get_action_registry()
-    action = registry.get(action_id, include_revoked=include_revoked)
+    action = registry.get(action_id, resource_type=resource_type, include_revoked=include_revoked)
     if action is None:
         raise HTTPException(404, f"Action '{action_id}' not found")
     return action

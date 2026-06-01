@@ -78,6 +78,7 @@ All services deploy to `us-central1` (configurable). Current deployed state:
 | agent-auth-gateway-recommender | Policy Recommender agent | `gateway/recommender/Dockerfile` | 1Gi | `agent-auth-gateway-recommender` |
 | agent-auth-investigator | Incident Investigator agent | `gateway/investigator/Dockerfile` | 1Gi | `agent-auth-investigator` |
 | agent-auth-gateway-coordinator | Discovery Coordinator | `gateway/coordinator/Dockerfile` | 1Gi | `agent-auth-gateway-coordinator` |
+| agent-auth-gateway-isolator | Incident Isolator agent | `gateway/isolator/Dockerfile` | 1Gi | `agent-auth-gateway-isolator` |
 | agent-auth-demo-ui | Interactive demo dashboard | `independent-agent/` | 512Mi | `agent-auth-demo-ui` |
 
 All services use `--min-instances=0` (scale-to-zero) and `--max-instances=10` by default.
@@ -323,6 +324,8 @@ Each AI agent service requires `roles/aiplatform.user` on its service account fo
 | `GOOGLE_CLOUD_LOCATION` | AI agents | Vertex AI region (e.g., `us-central1`) |
 | `ANCHOR_TO_BASE` | Gateway (REST) | Set to `true` to enable Base L2 Merkle anchoring |
 | `MAX_PER_TICK` | Auditor | Max receipts per audit tick (default: 10) |
+| `POLICY_YAML_PATH` | Gateway | Path to a YAML policy file to load at startup (overrides built-in demo policy; see docs/policy.md) |
+| `A2A_BASE_URL` | AI agents (Auditor, Recommender, Investigator, Coordinator, Isolator) | Base URL of the service's own A2A endpoint, used to populate the agent card `url` field |
 
 ## Verification
 

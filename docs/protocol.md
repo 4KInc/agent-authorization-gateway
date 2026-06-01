@@ -1,6 +1,7 @@
-# Receipt Chain Verification Protocol v0.4
+# Receipt Chain Verification Protocol v0.5
 
 > **Changelog:**
+> - v0.5 — Two-step proof-of-possession registration flow (`POST /agents/register-challenge` + `POST /agents/register`). Challenge nonce: 60s TTL, single-use. Agent ID validation: `[a-zA-Z0-9_-]{1,256}`. JWK validation: `kty=OKP`, `crv=Ed25519`, `x` must decode to 32 bytes. Registration now has replace semantics (no HTTP 409 on re-registration). `verify_chain` supports partial chains via `start_seq`. MCP tools namespaced (`gateway_*`, `auditor_*`); old names kept as aliases.
 > - v0.4 — On-chain anchoring of Merkle roots to Base L2 mainnet. Batched (every 10 receipts or hourly). Async, never on trust path. Each anchor record includes the Base transaction hash, block number, and block timestamp. `GET /anchors` and `GET /anchors/verify/{tx_hash}` endpoints added.
 > - v0.3.1 — `/verify-receipt` now performs bounded chain verification (single prev_receipt link check). Genesis returns PASS. Broken link returns FAIL with `PREV_LINK_BROKEN`. Missing predecessor returns INCONCLUSIVE with `PREV_NOT_FOUND`.
 > - v0.3 — `action_digest` now mandatory in every proof (missing = `PROOF_DIGEST_MISSING`); `htm`/`htu` scoped as named limitation for v0.4.
@@ -17,7 +18,7 @@ This document also specifies the client-facing protocol: how agents register, pr
 The end-to-end flow for a client agent:
 
 1. **Generate identity:** Create an Ed25519 keypair (one-time).
-2. **Register:** Call the `register_agent` MCP tool with the public key (JWK). Receive an `agent_id` and `kid`.
+2. **Register (two steps):** Call `gateway_register_challenge` with your `agent_id` to get a nonce, then call `gateway_register_agent` with the public key JWK and a signed registration proof. Receive an `agent_id` and `kid`. The nonce expires in 60 seconds and is single-use.
 3. **Build proof:** For each action, compute the `action_digest`, then sign a DPoP-style proof JWT binding the agent's identity to that specific action.
 4. **Authorize:** Call the `authorize_action` MCP tool over an authenticated transport (bearer token), passing the proof. Receive a decision, a signed receipt, and (if approved) a 60-second scoped token.
 5. **Execute:** Use the token as a `Bearer` token against the protected resource.
@@ -198,21 +199,59 @@ The `action_digest` is always present and matches `compute_action_digest("worker
 
 ## Agent Registration
 
-Before an agent can authorize actions, it must register its Ed25519 public key with the gateway.
+Before an agent can authorize actions, it must register its Ed25519 public key with the gateway. Registration uses a two-step proof-of-possession (PoP) flow to ensure the submitting party controls the private key being registered.
 
 **Source:** `gateway/identity.py:63-85` (AgentRegistry.register), `gateway/mcp_server.py:182-204` (MCP tool)
 
-### Flow
+### Two-Step PoP Flow
 
-1. Agent generates an Ed25519 keypair.
-2. Agent exports the public key as a JWK with fields: `kty`, `crv`, `x` (base64url-encoded, no padding).
-3. Agent calls the `register_agent` MCP tool with its chosen `agent_id` and the JWK as a JSON string.
-4. Gateway parses the JWK, computes a key fingerprint (`kid = "agent-" + sha256(raw_public_key_bytes)[:16]`), and stores the mapping.
-5. Gateway returns `{"status": "registered", "agent_id": "...", "kid": "agent-..."}`.
+**Step 1 — Obtain a challenge nonce**
 
-### JWK Format
+```
+POST /agents/register-challenge
+{"agent_id": "<agent_id>"}
 
-The public key JWK must have exactly these fields:
+200 OK
+{"nonce": "<hex_nonce>", "expires_in": 60}
+```
+
+The nonce has a **60-second TTL** and is **single-use** — it is consumed the moment it is successfully verified. Submitting an expired or already-used nonce returns HTTP 400.
+
+**Step 2 — Register with proof**
+
+```
+POST /agents/register
+{
+  "agent_id": "<agent_id>",
+  "public_key": { "kty": "OKP", "crv": "Ed25519", "x": "<base64url>" },
+  "registration_proof": "<EdDSA JWT>"
+}
+```
+
+The `registration_proof` JWT payload:
+```json
+{
+  "sub": "<agent_id>",
+  "nonce": "<nonce from step 1>",
+  "iat": <unix_timestamp>
+}
+```
+
+The JWT must be signed with the agent's Ed25519 private key. The gateway verifies the signature against the `public_key` field in the same request. Both steps must complete within the nonce TTL.
+
+### Agent ID Validation
+
+`agent_id` must satisfy: `[a-zA-Z0-9_-]{1,256}`
+
+- 1 to 256 characters
+- Alphanumeric characters, hyphens (`-`), and underscores (`_`) only
+- Case-sensitive
+
+Requests with an `agent_id` outside this pattern are rejected with HTTP 422.
+
+### JWK Validation
+
+The public key JWK must satisfy all of the following:
 
 ```json
 {
@@ -222,15 +261,21 @@ The public key JWK must have exactly these fields:
 }
 ```
 
-The `x` value is the raw Ed25519 public key bytes (32 bytes) encoded as base64url without `=` padding. The gateway decodes it by replacing `-`→`+`, `_`→`/`, adding padding, then base64-decoding (`identity.py:66-71`).
+| Field | Required value | Rejection if violated |
+|-------|---------------|----------------------|
+| `kty` | `"OKP"` | HTTP 422 |
+| `crv` | `"Ed25519"` | HTTP 422 |
+| `x` | base64url string decoding to exactly 32 bytes | HTTP 422 |
 
-### Idempotency
+The `x` value is decoded by replacing `-`→`+`, `_`→`/`, restoring `=` padding, then standard base64-decoding (`identity.py:66-71`).
 
-Re-registering the same `agent_id` with a different key **overwrites** the previous registration (the `_agents` dict is keyed by `agent_id`). There is no error on re-registration.
+### Replace Semantics
+
+Re-registering the same `agent_id` (with a new PoP proof) **replaces** the previous key. There is no HTTP 409 on re-registration. The old key is immediately invalidated and the new `kid` takes effect for all subsequent authorization requests.
 
 ### Registry Lifetime
 
-The registry is in-memory. If the gateway restarts, all registrations are lost and agents must re-register. This is by design for the hackathon; a production deployment would back the registry with Firestore.
+The registry is backed by Firestore at `tenants/{tenant}/agent_registry/{agent_id}` and an in-memory cache. Restarts reload from Firestore.
 
 ---
 
@@ -239,6 +284,17 @@ The registry is in-memory. If the gateway restarts, all registrations are lost a
 The gateway exposes these tools via the Model Context Protocol (MCP) using FastMCP over Streamable HTTP.
 
 **Source:** `gateway/mcp_server.py:61-204`
+
+### Tool Namespacing
+
+MCP tools are namespaced by service prefix:
+
+| Prefix | Service | Example tool |
+|--------|---------|-------------|
+| `gateway_` | Core authorization gateway | `gateway_authorize_action` |
+| `auditor_` | Policy Auditor agent | `auditor_query_compliance` |
+
+The old unnamespaced names (`authorize_action`, `register_agent`, etc.) are retained as **backward-compatible aliases** and will not be removed before v1.0. New integrations should use the prefixed names.
 
 ### `authorize_action`
 
@@ -520,6 +576,10 @@ for each receipt in chain:
 ```
 
 If any step fails, the verification reports the specific receipt index and failure type.
+
+### Partial Chain Verification
+
+`verify_chain` (both `GET /verify-chain` and the `verify_chain` MCP tool) supports **partial chains**. The caller may supply a `start_seq` parameter; verification begins at that sequence number rather than requiring `seq=1` as the starting point. The first receipt in a partial chain is treated as the local genesis — its `prev_receipt` is trusted as a given rather than verified. This allows auditors to verify a recent window of receipts without loading the entire history.
 
 ## Merkle Anchoring
 

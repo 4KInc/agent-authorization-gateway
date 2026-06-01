@@ -624,36 +624,47 @@ async def coordinator_register_known_agent(agent_card_url: str) -> str:
 # ============================================================================
 
 @mcp.tool()
-async def actions_query_actions(include_revoked: bool = False, limit: int = 100) -> str:
+async def actions_query_actions(
+    resource_type: str = "",
+    include_revoked: bool = False,
+    limit: int = 100,
+) -> str:
     """Query the actions registry. Returns registered actions with their risk levels
-    and approval requirements.
+    and approval requirements, scoped to a resource_type.
 
     Each action has:
     - action_id: canonical identifier (e.g., "read", "delete", "admin")
+    - resource_type: "db" (v0.5; extensible to api, storage, queue)
     - risk_level: low | medium | high | critical
     - requires_human_approval: whether the action needs human-in-the-loop approval
 
     Args:
+        resource_type: Filter by resource type (e.g., "db"). Empty = all.
         include_revoked: Include revoked actions in results.
         limit: Maximum number of actions to return.
     """
+    params: dict = {"include_revoked": str(include_revoked).lower(), "limit": limit}
+    if resource_type:
+        params["resource_type"] = resource_type
     result = await _call_agent(
-        GATEWAY_REST_URL, "GET", "/actions",
-        params={"include_revoked": str(include_revoked).lower(), "limit": limit},
+        GATEWAY_REST_URL, "GET", "/actions", params=params,
     )
     return json.dumps(result, default=str)
 
 
 @mcp.tool()
-async def actions_get_action(action_id: str) -> str:
-    """Get a specific registered action by ID, including its risk level,
-    human-approval requirement, and metadata.
+async def actions_get_action(action_id: str, resource_type: str = "") -> str:
+    """Get a specific registered action by (action_id, resource_type).
 
     Args:
         action_id: The action identifier to look up.
+        resource_type: Resource type scope (e.g., "db"). Empty = any.
     """
+    params = {}
+    if resource_type:
+        params["resource_type"] = resource_type
     result = await _call_agent(
-        GATEWAY_REST_URL, "GET", f"/actions/{action_id}",
+        GATEWAY_REST_URL, "GET", f"/actions/{action_id}", params=params,
     )
     return json.dumps(result, default=str)
 
@@ -663,31 +674,38 @@ async def actions_register_action(
     action_id: str,
     display_name: str,
     risk_level: str,
+    resource_type: str,
     description: str = "",
     requires_human_approval: bool = False,
     metadata: str = "{}",
 ) -> str:
-    """Register a new action in the actions registry.
+    """Register a new action in the actions registry, scoped to a resource_type.
 
     action_id: must match [a-zA-Z0-9._/-]{1,256}
+    resource_type: must be "db" (v0.5; extensible in v0.6+)
     risk_level: one of "low", "medium", "high", "critical"
-    requires_human_approval: if true, this action requires external
-        human-in-the-loop approval (informational in v0.5)
+
+    The unique key is (action_id, resource_type). The same action_id can
+    exist under multiple resource_types when more types ship.
 
     Args:
         action_id: Canonical action identifier.
         display_name: Human-readable name for dashboards.
         risk_level: One of low, medium, high, critical.
+        resource_type: Resource type scope (e.g., "db").
         description: Optional description of what this action does.
         requires_human_approval: Whether human approval is required.
         metadata: JSON string of additional key-value metadata.
     """
     if risk_level not in ("low", "medium", "high", "critical"):
         return json.dumps({"error": f"invalid risk_level: {risk_level}", "valid_values": ["low", "medium", "high", "critical"]})
+    if resource_type not in ("db",):
+        return json.dumps({"error": f"invalid resource_type: {resource_type}", "valid_values": ["db"]})
 
     payload: dict = {
         "action_id": action_id,
         "display_name": display_name,
+        "resource_type": resource_type,
         "description": description,
         "risk_level": risk_level,
         "requires_human_approval": requires_human_approval,

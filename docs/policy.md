@@ -138,3 +138,47 @@ This binding means:
 ## Dry Run
 
 Use `POST /authorize/dry-run` to test policy decisions without creating receipts or advancing the chain. This is useful for validating policy changes before applying them.
+
+## Policy Loading
+
+The Gateway resolves its active policy in this order (first source wins):
+
+1. **YAML file** (`POLICY_YAML_PATH` environment variable): if set, the file is loaded at startup and reloaded on SIGHUP. The YAML structure mirrors the JSON format (`version`, `rules`, optional `require_resource_registration`).
+2. **Firestore** (`FIRESTORE_ENABLED=true`): the latest policy document is fetched from the `policy` collection on startup and polled for changes.
+3. **Built-in demo policy**: used when neither of the above sources is configured. Suitable for local development and the hosted demo only; not recommended for production.
+
+Changes via `PUT /policy` write through to whichever backend is active (Firestore or in-memory).
+
+## Resource Registration Flag
+
+The `require_resource_registration` flag (boolean, default: `false`) can be set at the top level of the policy document:
+
+```json
+{
+  "version": "2",
+  "require_resource_registration": true,
+  "rules": [...]
+}
+```
+
+When `true`, the Gateway rejects authorization requests for any resource that has not been explicitly registered in the resource registry (`POST /resources/register`). Requests targeting unregistered resources receive `RESOURCE_NOT_REGISTERED` in `reason_codes`. This flag is intended for production deployments where the set of permitted resources is fully enumerated.
+
+## Automated Containment via Rate Limit
+
+The Isolator agent enforces containment by setting `max_actions: 0` on a targeted rate-limit rule for a specific agent. This effectively blocks all further authorizations for that agent until a human administrator resets the rule. The mechanism reuses the existing `rate_limit` rule type — a `max_actions` value of `0` means no actions are permitted within any window.
+
+Example containment payload written by the Isolator:
+
+```json
+{
+  "id": "isolator-containment-<agent_id>",
+  "type": "rate_limit",
+  "config": {
+    "max_actions": 0,
+    "window_seconds": 86400,
+    "target_agent": "<agent_id>"
+  }
+}
+```
+
+All Gateway decisions following containment reference the updated policy hash, providing an auditable record of when the containment rule was applied.

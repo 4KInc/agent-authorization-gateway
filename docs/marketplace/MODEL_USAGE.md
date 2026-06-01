@@ -2,7 +2,7 @@
 
 ## Overview
 
-Gate uses Gemini 2.5 Pro for all AI reasoning. Four of the five agents use models; the Gateway is entirely deterministic and does not invoke any model. This architectural separation ensures that no model sits on the authorization trust path — all real-time authorization decisions are made by deterministic policy evaluation, and model-powered agents operate asynchronously on the resulting audit trail.
+Gate uses Gemini 2.5 Pro for all AI reasoning. Five of the six agents use models; the Gateway is entirely deterministic and does not invoke any model. This architectural separation ensures that no model sits on the authorization trust path — all real-time authorization decisions are made by deterministic policy evaluation, and model-powered agents operate asynchronously on the resulting audit trail.
 
 All model calls are routed through Vertex AI's Model Garden (`us-central1-aiplatform.googleapis.com`), powered by Gemini 2.5 Pro. Model Garden routing provides enterprise-grade controls: customer-controlled region for model inference, VPC Service Controls support, customer-managed encryption keys (CMEK), and unified billing through GCP. The `GOOGLE_GENAI_USE_VERTEXAI=TRUE` environment variable on each agent service activates Vertex routing through the ADK.
 
@@ -15,10 +15,11 @@ All model calls are routed through Vertex AI's Model Garden (`us-central1-aiplat
 | Recommender | Gemini 2.5 Pro | Google | Vertex AI Model Garden | Async, scheduled (hourly) | Pattern detection and policy proposal drafting |
 | Investigator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | Reactive, event-driven | Evidence synthesis and incident report assembly |
 | Coordinator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | On-demand, per-request | Agent capability assessment and question routing |
+| Isolator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | Reactive, event-driven | Incident severity analysis and containment recommendation |
 
 ### Model Garden Routing
 
-Gemini 2.5 Pro is accessed via Vertex AI's Model Garden in the `us-central1` region. This is the same model available through the Google AI API, but accessed through Vertex's enterprise endpoint (`us-central1-aiplatform.googleapis.com`).
+Gemini 2.5 Pro is accessed via Vertex AI's Model Garden in the `us-central1` region. This is the same model available through the Google AI API, but accessed through Vertex AI Model Garden's enterprise endpoint (`us-central1-aiplatform.googleapis.com`).
 
 Benefits of Model Garden routing:
 
@@ -155,7 +156,7 @@ AI agents in Gate do **not** sit on the authorization trust path. The architectu
 
 **Detection:** Model compromise is detectable because all AI agent outputs are signed artifacts. A false ALIGNED verdict for a receipt that clearly violates policy would be visible to any human reviewer who reads the receipt alongside the audit report. Out-of-band verification (reading receipts directly, cross-referencing with the compliance corpus) would reveal the misalignment.
 
-**Resilience:** Authorization continues to operate correctly even if all four AI agents are compromised simultaneously. The Gateway's deterministic policy enforcement is independent of model outputs. The AI agents provide visibility and recommendations — they do not provide enforcement.
+**Resilience:** Authorization continues to operate correctly even if all five AI agents are compromised simultaneously. The Gateway's deterministic policy enforcement is independent of model outputs. The AI agents provide visibility and recommendations — they do not provide enforcement.
 
 ## Audit and Review
 
