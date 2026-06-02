@@ -71,6 +71,7 @@ class PolicyEngine:
         action: str,
         resource: str,
         parameters: dict | None = None,
+        dry_run: bool = False,
     ) -> EvaluationResult:
         """Evaluate an action intent against all policy rules.
 
@@ -88,7 +89,7 @@ class PolicyEngine:
                     deny_reasons.append(f"RESOURCE_OUT_OF_SCOPE:{rule.id}")
 
             elif rule.type == "rate_limit":
-                if not self._check_rate_limit(rule, agent_id):
+                if not self._check_rate_limit(rule, agent_id, dry_run=dry_run):
                     deny_reasons.append(f"RATE_LIMIT_EXCEEDED:{rule.id}")
 
         if deny_reasons:
@@ -117,7 +118,7 @@ class PolicyEngine:
 
         return True
 
-    def _check_rate_limit(self, rule: PolicyRule, agent_id: str) -> bool:
+    def _check_rate_limit(self, rule: PolicyRule, agent_id: str, dry_run: bool = False) -> bool:
         max_actions = rule.config.get("max_actions", 100)
         window_seconds = rule.config.get("window_seconds", 60)
 
@@ -134,7 +135,8 @@ class PolicyEngine:
         if len(self._rate_counters[key]) >= max_actions:
             return False
 
-        self._rate_counters[key].append(now)
+        if not dry_run:
+            self._rate_counters[key].append(now)
         return True
 
 

@@ -235,13 +235,16 @@ gcloud builds submit --tag us-central1-docker.pkg.dev/PROJECT/repo/image:latest
 gcloud run deploy agent-auth-gateway --image ... --allow-unauthenticated \
   --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT,ANCHOR_TO_BASE=true"
 
-# MCP server (transport auth required)
-MCP_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+# MCP server (transport auth via Secret Manager — recommended)
+# First, store the token in Secret Manager (one-time):
+#   MCP_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+#   echo -n "$MCP_TOKEN" | gcloud secrets create mcp-auth-token --data-file=-
 gcloud run deploy agent-auth-gateway-mcp --image ... --allow-unauthenticated \
-  --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT,MCP_AUTH_MODE=bearer,MCP_AUTH_TOKEN=$MCP_TOKEN"
+  --set-env-vars="FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=PROJECT,MCP_AUTH_MODE=bearer" \
+  --set-secrets="MCP_AUTH_TOKEN=mcp-auth-token:latest"
 ```
 
-> **Production note:** Use `MCP_AUTH_MODE=iam` with `--no-allow-unauthenticated` for production MCP deployments. The REST API's `/authorize` endpoint enforces DPoP proof at the application layer regardless of Cloud Run IAM settings.
+> **Security note:** Use `--set-secrets` (not `--set-env-vars`) for `MCP_AUTH_TOKEN` so the value is not visible in Cloud Run revision metadata. Use `MCP_AUTH_MODE=iam` with `--no-allow-unauthenticated` for production MCP deployments. The REST API's `/authorize` endpoint enforces DPoP proof at the application layer regardless of Cloud Run IAM settings.
 
 ## Demo
 
@@ -269,6 +272,74 @@ Run `./examples/demo/run_demo.sh` to see the full demo locally.
 | Protected Resource | https://agent-auth-gateway-resource-1031148889398.us-central1.run.app |
 
 > **MCP auth:** The MCP server requires `Authorization: Bearer <token>`. A demo bearer token is shared with the submission; production deployments use `MCP_AUTH_MODE=iam` with Cloud Run IAM. See [SECURITY.md](SECURITY.md).
+
+## Positioning Against Adjacent Products
+
+The "AI agent governance" space is new enough that the comparison terrain is not yet settled. Several established product categories have surface similarities to Gate but address fundamentally different problems.
+
+### vs Auth0, Okta, and traditional identity providers
+
+Auth0, Okta, and similar identity providers solve human authentication and human-to-application authorization. Their domain is users logging in to applications, the SSO flow, the OAuth dance, multi-factor enrollment, and the lifecycle of human identities.
+
+Gate is in a different domain. It does not authenticate humans. It does not manage SSO. It does not issue session tokens for web applications. What Gate does is produce cryptographic evidence of authorization decisions made about AI agent actions: did this agent attempt to perform this action on this resource, was the attempt approved or denied, and what is the signed proof of that decision.
+
+The two categories are complementary, not competitive. A typical deployment has Okta handling who can access the operator dashboard for Gate itself, and Gate handling what AI agents are authorized to do through the deployed system.
+
+### vs Vanta, Drata, and compliance automation platforms
+
+Vanta and Drata automate the gathering and presentation of evidence that controls exist and are operating: SOC 2 Type II evidence, ISO 27001 control attestation, HIPAA technical safeguards. They prove that a control was implemented.
+
+Gate proves something different. Gate proves that a specific decision happened at a specific moment by a specific deterministic policy engine. The output is not "we have an access control policy" but rather "this exact request was denied at 14:32 UTC on this date, here is the Ed25519 signature, here are the NIST and OWASP citations the audit pipeline produced for that decision, and the entire chain is hash-linked back to genesis."
+
+The two are complementary in production. A regulated enterprise running both gets Vanta proving controls exist and Gate proving decisions happened.
+
+### vs Aembit, SPIFFE, and workload identity systems
+
+Aembit and SPIFFE/SPIRE establish cryptographic identity for workloads: this microservice is verifiably this thing, here is its short-lived credential, here is the policy for service-to-service trust. Gate's DPoP proof of possession mechanism is in the same family of primitives, but Gate's primary contribution is not workload identity issuance — it is decision evidence for AI agent actions specifically.
+
+AI agents are different from long-running services: they make decisions through non-deterministic reasoning, they invoke variable tools across sessions, and their action history is itself the thing regulators want to audit. Gate is built for that audit story. A serious enterprise deployment could run Aembit for service-to-service trust and Gate for agent action accountability.
+
+### vs model-level safety work (Anthropic, OpenAI, others)
+
+Frontier model laboratories invest in training-time safety: constitutional AI, RLHF, refusal training, red-teaming. This produces models that are less likely to take harmful actions when given the choice.
+
+Gate operates one layer down. Even well-aligned models can be invoked through ambiguous tool calls, can be prompt-injected through poisoned inputs, and can act in ways their operators did not anticipate. Authorization at the infrastructure layer is a defense in depth that does not depend on the model's training being perfect. The Gateway is deterministic. The policy is code. The receipts are signed.
+
+Model-level safety reduces the probability of harmful intent. Infrastructure-level enforcement reduces the consequences when intent is wrong. Both are needed.
+
+## Build vs Buy
+
+Every engineering leader considering Gate asks whether to just build it internally.
+
+### The substrate that is "easy" to build
+
+A team comfortable with cryptographic primitives can produce in roughly 2-4 engineering-weeks: an Ed25519 signing service, a hash-chained append-only log of decisions, a JCS canonicalization helper, a DPoP proof verification module, and basic policy evaluation against an allowlist. These are well-documented primitives.
+
+### The infrastructure that is harder
+
+Where most internal builds stall: the signed-artifact pipeline beyond authorization decisions. Producing audit reports against compliance frameworks (NIST, OWASP, ISO) requires a RAG corpus, prompt engineering that avoids hallucination, retrieval that produces verbatim citations not paraphrased summaries, and a non-deterministic-model failure mode that is acceptable to auditors. This requires roughly 2-3 months of focused work and ongoing investment to keep the corpus current.
+
+Multi-agent coordination through A2A and MCP protocols, with consistent signing identities, proper kid management, and a unified tool surface, is another 1-2 months for someone who already knows MCP.
+
+### The operational and compliance investment
+
+The audit-ready story requires more than code. Customer-facing deployment documentation, SOC 2 control mappings, compliance corpus maintenance, vulnerability disclosure processes, independent security audits, and ongoing standards-tracking are continuous investments. A realistic internal build of a comparable system requires a dedicated team of 2-4 engineers for 6-9 months to reach feature parity with Gate's v0.5.
+
+### When building makes sense
+
+Building internally is the right choice when the authorization domain is highly specialized, the compliance frameworks of interest are niche enough that no commercial offering will cover them, or the cryptographic accountability layer is itself the product.
+
+### When buying makes sense
+
+Buying makes sense when the company's AI agent deployment is one component of a larger product, standard compliance frameworks cover the audit requirements, time-to-deployment matters more than perfect fit, or the team is small enough that 2-4 engineers on a 6-9 month build represents a meaningful opportunity cost.
+
+## Open Protocol, Commercial Deployment
+
+Gate's protocol is fully documented and unencumbered. The receipt format, the DPoP proof structure, the agent registration challenge-response, the A2A card extensions, and the live challenge verification are all specified in this repository. Anyone can implement a compatible client or server.
+
+The reference implementation in this repository is licensed Apache-2.0. The signing key formats are standard JWK. The cryptographic primitives are Ed25519 and SHA-256. No proprietary algorithms, no required dependency on BlockIntel-hosted infrastructure, no token-redemption service to call out to.
+
+What BlockIntel offers commercially is the deployed system, the maintained compliance corpus, the operational support, and the ongoing engineering investment in the v0.6 and v1.0 roadmap items. Customers who prefer to self-host can do so under Apache-2.0; customers who prefer a managed deployment work with BlockIntel directly. The protocol stays open regardless.
 
 ## Security Model
 

@@ -40,12 +40,29 @@ class EvidenceCollector:
         doc = self.db.collection("tenants").document(tenant) \
             .collection("metadata").document("agent_registry").get()
         if not doc.exists:
-            return None
+            return {"agent_id": agent_id, "registered": False, "evidence_id": f"agent_registry/{agent_id}"}
         registry = doc.to_dict()
         agents = registry.get("agents", {})
-        if agent_id in agents:
-            return {"agent_id": agent_id, "status": "registered", **agents[agent_id]}
-        return {"agent_id": agent_id, "status": "unregistered"}
+        if agent_id not in agents:
+            return {"agent_id": agent_id, "registered": False, "evidence_id": f"agent_registry/{agent_id}"}
+        data = agents[agent_id]
+        return {
+            "agent_id": agent_id,
+            "registered": True,
+            "status": "registered",
+            "registered_at": data.get("registered_at"),
+            "registered_via": data.get("registered_via", "self"),
+            "public_key_fingerprint": data.get("kid", "")[:24],
+            "agent_card_url": data.get("agent_card_url"),
+            "agent_card_verification": data.get("agent_card_verification"),
+            "agent_card_verified_at": data.get("agent_card_verified_at"),
+            "live_challenge_url": data.get("live_challenge_url"),
+            "live_challenge_verification": data.get("live_challenge_verification"),
+            "live_challenge_verified_at": data.get("live_challenge_verified_at"),
+            "quarantine_status": data.get("quarantine_status", "active"),
+            "quarantined_at": data.get("quarantined_at"),
+            "evidence_id": f"agent_registry/{agent_id}",
+        }
 
     def get_recent_activity(self, tenant: str, agent_id: str, hours_back: int = 24) -> List[Dict]:
         from datetime import datetime, timezone, timedelta
@@ -104,17 +121,19 @@ def make_adk_tools(collector: EvidenceCollector, tenant: str):
         return json.dumps(result, default=str)
 
     def get_agent_registration(agent_id: str) -> str:
-        """Look up an agent's registration status and key information.
+        """Look up an agent's full registration provenance.
+
+        Returns registration timestamp, A2A card verification status,
+        live challenge verification result, public key fingerprint,
+        registration mode (self vs operator), and quarantine status.
 
         Args:
             agent_id: The agent identifier to look up.
 
         Returns:
-            JSON string with agent registration details.
+            JSON string with full agent registration provenance.
         """
         result = collector.get_agent_registration(tenant, agent_id)
-        if result is None:
-            return json.dumps({"agent_id": agent_id, "status": "unregistered"})
         return json.dumps(result, default=str)
 
     def get_recent_activity(agent_id: str, hours_back: int = 24) -> str:

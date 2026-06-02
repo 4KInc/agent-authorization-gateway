@@ -57,6 +57,14 @@ def _make_registered_gateway() -> tuple[GatewayService, Ed25519PrivateKey, str]:
 # =============================================================================
 
 
+_has_uvicorn = True
+try:
+    import uvicorn  # noqa: F401
+except ImportError:
+    _has_uvicorn = False
+
+
+@pytest.mark.skipif(not _has_uvicorn, reason="uvicorn not installed (MCP server runtime dependency)")
 class TestTransportAuth:
     """Tests for MCP transport authentication (bearer mode)."""
 

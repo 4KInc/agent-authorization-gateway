@@ -1,5 +1,7 @@
 # Receipt Chain Verification Protocol v0.5
 
+**Standards intent:** BlockIntel intends to submit the Gate protocol to the IETF or another appropriate standards body in 2027 once v1.0 ships and at least one external reference implementation exists. The protocol is designed to be implementation-neutral and is being developed in the open with that future submission in mind.
+
 > **Changelog:**
 > - v0.5 — Two-step proof-of-possession registration flow (`POST /agents/register-challenge` + `POST /agents/register`). Challenge nonce: 60s TTL, single-use. Agent ID validation: `[a-zA-Z0-9_-]{1,256}`. JWK validation: `kty=OKP`, `crv=Ed25519`, `x` must decode to 32 bytes. Registration now has replace semantics (no HTTP 409 on re-registration). `verify_chain` supports partial chains via `start_seq`. MCP tools namespaced (`gateway_*`, `auditor_*`); old names kept as aliases.
 > - v0.4 — On-chain anchoring of Merkle roots to Base L2 mainnet. Batched (every 10 receipts or hourly). Async, never on trust path. Each anchor record includes the Base transaction hash, block number, and block timestamp. `GET /anchors` and `GET /anchors/verify/{tx_hash}` endpoints added.

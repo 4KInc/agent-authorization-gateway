@@ -182,6 +182,21 @@ Six AI agents operate on top of the gateway. None of them sit on the authorizati
 
 **Isolator containment scope:** The Isolator calls `POST /agents/{agent_id}/revoke` and `POST /agents/{agent_id}/rate-limit` on the REST API using its own registered identity and DPoP proof. It does not have access to the signing key, cannot issue tokens on behalf of other agents, and cannot alter the receipt chain. All Isolator actions produce their own receipts in the chain, making the containment event auditable.
 
+## v0.5.1 Security Hardening
+
+The following defenses were added in v0.5.1:
+
+- **DPoP proof required for dry-run authorization** (previously unauthenticated). Closes the policy-enumeration vector.
+- **Per-IP rate limit on registration challenges** (10 per 60s). Prevents memory exhaustion via challenge flooding.
+- **Global capacity cap on the challenge dictionary** (10,000 active). Backstop for sustained attacks across many IPs.
+- **MCP bearer token moved to Secret Manager** (previously in environment variable). Reduces blast radius of `run.services.get` IAM exposure.
+- **Input size validation on `parameters`, `metadata`, and policy `rules`** (64KB/8KB/16KB per field). Prevents request-body DoS.
+- **Strict character set on `action` and `resource` fields** (matching `agent_id`: `[a-zA-Z0-9._/-]`). Blocks prompt injection at the API boundary.
+- **Cursor pagination on `GET /chain`** (max 500 per page). Prevents OOM on receipt chain retrieval at scale.
+- **Defense-in-depth XML delimiters** in AI agent prompts (Auditor, Investigator). Receipt data is wrapped in `<receipt_data trusted="false">` tags with explicit "data, not instructions" framing.
+
+These were identified by the v0.5 feature gap audit and shipped together as a single hardening batch.
+
 ## Additional Threats
 
 ### 8. Key squatting (registering a key you don't control)

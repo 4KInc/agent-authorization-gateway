@@ -19,9 +19,9 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, field_validator
 
 import httpx
@@ -64,6 +64,27 @@ def _get_anchor() -> AnchorSink:
     return _anchor
 
 
+# --- Input size limits ---
+
+MAX_PARAMETERS_BYTES = 64 * 1024   # 64 KiB
+MAX_POLICY_RULES = 100
+MAX_RULE_BYTES = 16 * 1024         # 16 KiB per rule
+MAX_METADATA_BYTES = 8 * 1024      # 8 KiB for action/resource metadata
+
+import re as _re
+
+_SAFE_IDENTIFIER_RE = _re.compile(r"^[a-zA-Z0-9._/\-]+$")
+
+
+def _validate_dict_size(v, max_bytes, field_name):
+    if v is None:
+        return v
+    serialized = json.dumps(v)
+    if len(serialized.encode("utf-8")) > max_bytes:
+        raise ValueError(f"{field_name} exceeds {max_bytes} byte limit")
+    return v
+
+
 # --- Request/Response models ---
 
 class AuthorizeRequest(BaseModel):
@@ -75,10 +96,20 @@ class AuthorizeRequest(BaseModel):
 
     @field_validator("agent_id", "action", "resource")
     @classmethod
-    def no_empty_whitespace(cls, v: str) -> str:
-        if not v.strip():
+    def strict_identifier(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
             raise ValueError("must not be empty or whitespace-only")
-        return v.strip()
+        if not _SAFE_IDENTIFIER_RE.match(v):
+            raise ValueError(
+                "must contain only alphanumeric characters, dots, underscores, slashes, or hyphens"
+            )
+        return v
+
+    @field_validator("parameters")
+    @classmethod
+    def check_parameters_size(cls, v):
+        return _validate_dict_size(v, MAX_PARAMETERS_BYTES, "parameters")
 
 
 class AuthorizeResponse(BaseModel):
@@ -234,6 +265,25 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+_SECURITY_TXT = """\
+Contact: mailto:security@blockintelai.com
+Expires: 2027-06-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://agent-auth-gateway-1031148889398.us-central1.run.app/.well-known/security.txt
+Policy: https://github.com/4KInc/agent-authorization-gateway/blob/main/SECURITY.md
+
+# Gate is a cryptographic authorization layer for enterprise AI agents.
+# Security disclosures should reference the threat model in SECURITY.md.
+# We respond to all submissions within 5 business days.
+"""
+
+
+@api_app.get("/.well-known/security.txt", response_class=PlainTextResponse)
+async def well_known_security_txt():
+    """RFC 9116 security.txt for vulnerability disclosure."""
+    return _SECURITY_TXT
+
+
 @api_app.get("/", include_in_schema=False)
 async def root():
     """API landing — redirects to Swagger docs."""
@@ -323,16 +373,38 @@ async def authorize(req: AuthorizeRequest):
 async def authorize_dry_run(req: AuthorizeRequest):
     """Simulate an authorization without creating a receipt or token.
 
-    Evaluates the policy and returns what the decision would be,
-    without signing a receipt or advancing the chain. Useful for
-    testing policy changes before applying them.
+    Requires a valid DPoP proof (same as /authorize). Evaluates the
+    policy in read-only mode (rate counters are checked but not
+    incremented) and returns what the decision would be, without
+    signing a receipt or advancing the chain.
     """
     gateway = _get_gateway()
+
+    # DPoP verification — same as /authorize
+    if not req.agent_proof:
+        raise HTTPException(401, detail={"error": "NO_PROOF"})
+    try:
+        from .tokens import compute_action_digest
+        action_digest = compute_action_digest(req.agent_id, req.action, req.resource, req.parameters)
+        from .identity import verify_agent_proof
+        verify_agent_proof(
+            proof=req.agent_proof,
+            registry=gateway._registry,
+            expected_agent_id=req.agent_id,
+            expected_action=req.action,
+            expected_resource=req.resource,
+            expected_action_digest=action_digest,
+        )
+    except ValueError as e:
+        error_code = str(e).split(":")[0] if ":" in str(e) else str(e)
+        raise HTTPException(401, detail={"error": error_code})
+
     result = gateway._policy_engine.evaluate(
         agent_id=req.agent_id,
         action=req.action,
         resource=req.resource,
         parameters=req.parameters,
+        dry_run=True,
     )
     return {
         "decision": result.decision,
@@ -432,25 +504,43 @@ async def verify_chain_endpoint(req: VerifyChainRequest):
 
 
 @api_app.get("/chain")
-async def get_chain():
-    """Get the full receipt chain for audit/verification."""
+async def get_chain(
+    limit: int = Query(100, ge=1, le=500),
+    after_seq: int | None = Query(None, ge=0),
+):
+    """Get the receipt chain (paginated) for audit/verification.
+
+    Returns at most `limit` receipts. Use `after_seq` to fetch the next page
+    (pass the `next_cursor` value from the previous response).
+    """
     gateway = _get_gateway()
     store = _get_store()
 
-    # Try Firestore first for shared state across services
+    # Get all receipts (store handles sorting)
     stored_chain = await store.get_chain(gateway.tenant)
-    if stored_chain:
-        return {
-            "tenant": gateway.tenant,
-            "receipts": stored_chain,
-            "count": len(stored_chain),
-        }
+    all_receipts = stored_chain if stored_chain else gateway.get_receipt_chain()
 
-    # Fall back to in-memory chain
+    # Apply cursor-based pagination
+    if after_seq is not None:
+        all_receipts = [
+            r for r in all_receipts
+            if int((r.get("body", {}) if isinstance(r, dict) else {}).get("seq", 0) or 0) > after_seq
+        ]
+
+    page = all_receipts[:limit]
+    has_more = len(all_receipts) > limit
+
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        next_cursor = int((last.get("body", {}) if isinstance(last, dict) else {}).get("seq", 0) or 0)
+
     return {
         "tenant": gateway.tenant,
-        "receipts": gateway.get_receipt_chain(),
-        "count": len(gateway.get_receipt_chain()),
+        "receipts": page,
+        "count": len(page),
+        "next_cursor": next_cursor,
+        "has_more": has_more,
     }
 
 
@@ -511,8 +601,15 @@ async def get_policy():
 
 class UpdatePolicyRequest(BaseModel):
     version: str = Field(default="1", description="Policy version")
-    rules: list[dict] = Field(..., description="List of policy rules")
+    rules: list[dict] = Field(..., description="List of policy rules", max_length=MAX_POLICY_RULES)
     require_resource_registration: bool = False
+
+    @field_validator("rules")
+    @classmethod
+    def check_rules_size(cls, v):
+        for i, rule in enumerate(v):
+            _validate_dict_size(rule, MAX_RULE_BYTES, f"rules[{i}]")
+        return v
 
 
 @api_app.put("/policy")
@@ -567,8 +664,26 @@ class AgentChallengeRequest(BaseModel):
 
 
 @api_app.post("/agents/register-challenge")
-async def register_challenge(req: AgentChallengeRequest):
-    """Get a registration challenge nonce (step 1 of 2)."""
+async def register_challenge(req: AgentChallengeRequest, request: Request):
+    """Get a registration challenge nonce (step 1 of 2).
+
+    Rate-limited to 10 challenges per minute per IP.
+    Global capacity cap of 10,000 active challenges.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+
+    if not _challenge_cache.check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "CHALLENGE_RATE_LIMIT_EXCEEDED", "retry_after_seconds": 60},
+        )
+
+    if not _challenge_cache.check_capacity():
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "CHALLENGE_CAPACITY_EXCEEDED", "retry_after_seconds": 60},
+        )
+
     gateway = _get_gateway()
     return _challenge_cache.issue(gateway.tenant, req.agent_id)
 
@@ -794,6 +909,24 @@ class ActionRegisterRequest(BaseModel):
     requires_human_approval: bool = False
     metadata: dict | None = None
 
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata_size(cls, v):
+        return _validate_dict_size(v, MAX_METADATA_BYTES, "metadata")
+
+
+class ActionUpdateRequest(BaseModel):
+    display_name: str | None = Field(None, max_length=256)
+    description: str | None = Field(None, max_length=2048)
+    risk_level: str | None = None
+    requires_human_approval: bool | None = None
+    metadata: dict | None = None
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata_size(cls, v):
+        return _validate_dict_size(v, MAX_METADATA_BYTES, "metadata")
+
 
 @api_app.post("/actions/register")
 async def register_action(req: ActionRegisterRequest, request: Request):
@@ -852,11 +985,11 @@ async def revoke_action(action_id: str):
 
 
 @api_app.patch("/actions/{action_id:path}")
-async def update_action(action_id: str, updates: dict, request: Request):
+async def update_action(action_id: str, updates: ActionUpdateRequest, request: Request):
     """Update action metadata."""
     registry = _get_action_registry()
     try:
-        result = registry.update(action_id, updates)
+        result = registry.update(action_id, updates.model_dump(exclude_none=True))
         return result
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -897,6 +1030,11 @@ class ResourceRegisterRequest(BaseModel):
     metadata: dict | None = None
     reachability_url: str | None = Field(None, description="Optional URL for reachability verification")
 
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata_size(cls, v):
+        return _validate_dict_size(v, MAX_METADATA_BYTES, "metadata")
+
 
 class ResourceUpdateRequest(BaseModel):
     display_name: str | None = None
@@ -904,6 +1042,11 @@ class ResourceUpdateRequest(BaseModel):
     resource_type: ResourceType | None = None
     owner: str | None = None
     metadata: dict | None = None
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata_size(cls, v):
+        return _validate_dict_size(v, MAX_METADATA_BYTES, "metadata")
 
 
 def _get_resource_registry():

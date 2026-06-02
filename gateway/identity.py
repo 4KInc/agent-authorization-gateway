@@ -40,6 +40,9 @@ _proof_jti_cache: dict[str, float] = {}
 _PROOF_JTI_MAX = 5000
 _PROOF_MAX_AGE = 30
 _CHALLENGE_TTL = 60
+_CHALLENGE_RATE_LIMIT = 10  # per minute per IP
+_CHALLENGE_RATE_WINDOW = 60  # seconds
+_CHALLENGE_DICT_MAX = 10_000
 
 
 @dataclass
@@ -141,9 +144,26 @@ class RegistrationChallengeCache:
     def __init__(self, ttl_seconds: int = _CHALLENGE_TTL):
         self._ttl = ttl_seconds
         self._challenges: dict[str, _Challenge] = {}
+        self._ip_requests: dict[str, list[float]] = {}
 
     def _key(self, tenant: str, agent_id: str, nonce: str) -> str:
         return f"{tenant}:{agent_id}:{nonce}"
+
+    def check_rate_limit(self, client_ip: str) -> bool:
+        """Returns True if request is within rate limit, False if it should be rejected."""
+        now = time.time()
+        history = self._ip_requests.get(client_ip, [])
+        history = [t for t in history if now - t < _CHALLENGE_RATE_WINDOW]
+        if len(history) >= _CHALLENGE_RATE_LIMIT:
+            self._ip_requests[client_ip] = history
+            return False
+        history.append(now)
+        self._ip_requests[client_ip] = history
+        return True
+
+    def check_capacity(self) -> bool:
+        """Returns True if dict has room, False if at capacity."""
+        return len(self._challenges) < _CHALLENGE_DICT_MAX
 
     def issue(self, tenant: str, agent_id: str) -> dict:
         self._gc()
