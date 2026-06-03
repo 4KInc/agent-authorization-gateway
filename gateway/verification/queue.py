@@ -58,9 +58,10 @@ class QueueVerifier(ResourceVerifier):
         region = meta.get("region", "us-east-1")
 
         # 2. Pub/Sub: authenticated topic metadata read (GCP ADC)
+        #    403 = topic exists but SA lacks pubsub.topics.get (still proves existence)
         if topic and provider == "pubsub" and project_id:
             api_url = f"https://pubsub.googleapis.com/v1/projects/{project_id}/topics/{topic}"
-            result = await probe_gcp_api(api_url, "Pub/Sub topic")
+            result = await probe_gcp_api(api_url, "Pub/Sub topic", accept_statuses={200, 403})
             result.details["topic"] = topic
             result.details["provider"] = "pubsub"
             result.details["project_id"] = project_id

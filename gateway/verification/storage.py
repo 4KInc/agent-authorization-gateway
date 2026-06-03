@@ -52,9 +52,10 @@ class StorageVerifier(ResourceVerifier):
         provider = meta.get("provider", "")
 
         # 2. GCS: authenticated metadata read via Google APIs
+        #    403 = bucket exists but SA lacks storage.buckets.get (still proves existence)
         if bucket and provider == "gcs":
             api_url = f"https://storage.googleapis.com/storage/v1/b/{bucket}"
-            result = await probe_gcp_api(api_url, "GCS bucket")
+            result = await probe_gcp_api(api_url, "GCS bucket", accept_statuses={200, 403})
             result.details["bucket"] = bucket
             result.details["provider"] = "gcs"
             return result
