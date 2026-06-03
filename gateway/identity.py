@@ -52,6 +52,7 @@ class RegisteredAgent:
     public_key: Ed25519PublicKey
     kid: str
     registered_at: float = field(default_factory=time.time)
+    live_challenge_url: str | None = None
 
 
 class AgentAlreadyRegistered(Exception):
@@ -93,13 +94,16 @@ class AgentRegistry:
         self._agents: dict[str, RegisteredAgent] = {}
         self._by_kid: dict[str, RegisteredAgent] = {}
 
-    def register(self, agent_id: str, public_key_jwk: dict, **kwargs) -> RegisteredAgent:
+    def register(self, agent_id: str, public_key_jwk: dict, live_challenge_url: str | None = None, **kwargs) -> RegisteredAgent:
         """Register an agent's public key with replace semantics."""
         pub_key, key_bytes, kid = _parse_jwk(public_key_jwk)
         existing = self._agents.get(agent_id)
         if existing:
             self._by_kid.pop(existing.kid, None)
-        agent = RegisteredAgent(agent_id=agent_id, public_key=pub_key, kid=kid)
+        agent = RegisteredAgent(
+            agent_id=agent_id, public_key=pub_key, kid=kid,
+            live_challenge_url=live_challenge_url,
+        )
         self._agents[agent_id] = agent
         self._by_kid[kid] = agent
         logger.info("Registered agent: %s kid=%s", agent_id, kid)
@@ -119,7 +123,12 @@ class AgentRegistry:
 
     def list_agents(self, **kwargs) -> list[dict]:
         return [
-            {"agent_id": a.agent_id, "kid": a.kid, "registered_at": a.registered_at}
+            {
+                "agent_id": a.agent_id,
+                "kid": a.kid,
+                "registered_at": a.registered_at,
+                "live_challenge_url": a.live_challenge_url,
+            }
             for a in self._agents.values()
         ]
 

@@ -714,3 +714,248 @@ def test_well_known_security_txt_returns_200():
     assert "Contact:" in resp.text
     assert "Expires:" in resp.text
     assert resp.headers["content-type"].startswith("text/plain")
+
+
+# ===========================================================================
+# Resource Type & Verification Tests (v0.5.3)
+# ===========================================================================
+
+def test_resource_types_endpoint():
+    """GET /resources/types returns all registered resource types."""
+    resp = client.get("/resources/types")
+    assert resp.status_code == 200
+    data = resp.json()
+    type_names = [t["type"] for t in data["resource_types"]]
+    assert "db" in type_names
+    assert "api" in type_names
+    assert "storage" in type_names
+    assert "queue" in type_names
+    assert "function" in type_names
+    assert data["count"] == 5
+
+
+def test_register_api_resource_metadata_only():
+    """API resource with only metadata gets 'metadata_only' — not 'verified'."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "salesforce-crm-api",
+        "display_name": "Salesforce CRM API",
+        "resource_type": "api",
+        "metadata": {"auth_type": "oauth2", "base_url": "https://example.salesforce.com/api"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "registered"
+    assert data["resource_type"] == "api"
+    assert data["verification"] == "metadata_only"
+    assert "No live probe" in data["verification_reason"]
+
+
+def test_register_storage_resource_metadata_only():
+    """Storage with non-GCS metadata gets 'metadata_only'."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "s3-compliance-bucket",
+        "display_name": "S3 Compliance Bucket",
+        "resource_type": "storage",
+        "metadata": {"bucket": "compliance-docs", "provider": "s3"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "registered"
+    assert data["resource_type"] == "storage"
+    assert data["verification"] == "metadata_only"
+
+
+def test_register_queue_resource_metadata_only():
+    """Queue with non-Pub/Sub metadata gets 'metadata_only'."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "audit-events-topic",
+        "display_name": "Audit Events Topic",
+        "resource_type": "queue",
+        "metadata": {"topic": "audit-events", "provider": "kafka"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "registered"
+    assert data["resource_type"] == "queue"
+    assert data["verification"] == "metadata_only"
+
+
+def test_register_function_resource_metadata_only():
+    """Function with metadata but no live probe gets 'metadata_only'."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "invoice-processor",
+        "display_name": "Invoice Processor",
+        "resource_type": "function",
+        "metadata": {"function_name": "process-invoice", "provider": "lambda"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "registered"
+    assert data["resource_type"] == "function"
+    assert data["verification"] == "metadata_only"
+
+
+def test_register_unknown_type_rejected():
+    """Unknown resource type should be rejected with 422."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "unknown-thing",
+        "display_name": "Unknown",
+        "resource_type": "spaceship",
+    })
+    assert resp.status_code == 422
+
+
+def test_verification_skipped_when_no_metadata():
+    """Registration without metadata should skip verification."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "bare-api-resource",
+        "display_name": "Bare API",
+        "resource_type": "api",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verification"] == "skipped"
+
+
+def test_db_resource_with_engine_metadata_only():
+    """DB with engine metadata but no live probe gets 'metadata_only'."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "analytics-postgres",
+        "display_name": "Analytics PostgreSQL",
+        "resource_type": "db",
+        "metadata": {"engine": "postgresql", "connection_string": "postgresql://host/db"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verification"] == "metadata_only"
+    assert "postgresql" in data["verification_reason"]
+    assert "No live probe" in data["verification_reason"]
+
+
+def test_gcs_storage_attempts_live_probe():
+    """GCS storage with bucket+provider=gcs should attempt a live probe (not metadata_only).
+
+    In test env without GCP creds this will be 'failed', not 'metadata_only'.
+    The point: it TRIED to reach GCS, unlike the metadata-only path.
+    """
+    resp = client.post("/resources/register", json={
+        "resource_id": "gcs-live-probe-test",
+        "display_name": "GCS Live Probe Test",
+        "resource_type": "storage",
+        "metadata": {"bucket": "compliance-docs-v3", "provider": "gcs"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    # Should be "verified" (if GCP creds work) or "failed" (no creds)
+    # but NEVER "metadata_only" — it attempted a real probe
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_pubsub_queue_attempts_live_probe():
+    """Pub/Sub queue with topic+provider+project should attempt a live probe."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "pubsub-live-probe-test",
+        "display_name": "Pub/Sub Live Probe Test",
+        "resource_type": "queue",
+        "metadata": {"topic": "test-topic", "provider": "pubsub",
+                     "project_id": "quick-catcher-470218-b0"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_s3_storage_attempts_live_probe_with_creds():
+    """S3 with bucket + AWS credentials should attempt a live probe, not metadata_only."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "s3-live-probe-test",
+        "display_name": "S3 Live Probe Test",
+        "resource_type": "storage",
+        "metadata": {
+            "bucket": "nonexistent-test-bucket-12345",
+            "provider": "s3",
+            "region": "us-east-1",
+            "verification_credentials": {
+                "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            },
+        },
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    # Will fail (fake creds) but proves it TRIED a live probe
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_lambda_function_attempts_live_probe_with_creds():
+    """Lambda with function_name + AWS credentials should attempt a live probe."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "lambda-live-probe-test",
+        "display_name": "Lambda Live Probe Test",
+        "resource_type": "function",
+        "metadata": {
+            "function_name": "nonexistent-function",
+            "provider": "lambda",
+            "region": "us-east-1",
+            "verification_credentials": {
+                "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            },
+        },
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_verification_credentials_not_persisted():
+    """verification_credentials should be stripped before storage."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "cred-strip-test",
+        "display_name": "Credential Strip Test",
+        "resource_type": "storage",
+        "metadata": {
+            "bucket": "test-bucket",
+            "provider": "s3",
+            "verification_credentials": {
+                "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            },
+        },
+    })
+    assert resp.status_code == 200
+
+    # Fetch the resource back — credentials must not be stored
+    get_resp = client.get("/resources/cred-strip-test")
+    assert get_resp.status_code == 200
+    stored = get_resp.json()
+    stored_meta = stored.get("metadata", {})
+    assert "verification_credentials" not in stored_meta
+    assert "aws_secret_access_key" not in str(stored_meta)
+
+
+def test_sqs_queue_attempts_live_probe_with_creds():
+    """SQS with topic + account_id + AWS creds should attempt a live probe."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "sqs-live-probe-test",
+        "display_name": "SQS Live Probe Test",
+        "resource_type": "queue",
+        "metadata": {
+            "topic": "test-queue",
+            "provider": "sqs",
+            "region": "us-east-1",
+            "account_id": "123456789012",
+            "verification_credentials": {
+                "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            },
+        },
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"

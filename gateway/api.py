@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field, field_validator
 import httpx
 
 from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
+from .evidence_buffer import EvidenceBuffer
 from .gateway_service import GatewayService
+from .liveness import LivenessManager, LivenessState
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
 
@@ -41,6 +43,15 @@ logging.basicConfig(
 _gateway: GatewayService | None = None
 _store: ReceiptStore | None = None
 _anchor: AnchorSink | None = None
+_liveness: LivenessManager | None = None
+_evidence_buffer: EvidenceBuffer | None = None
+
+# Hot path mode: "sync" (default, blocking Firestore) or "async" (non-blocking)
+HOT_PATH_MODE = os.environ.get("HOT_PATH_MODE", "sync").lower()
+
+
+def _get_evidence_buffer() -> EvidenceBuffer | None:
+    return _evidence_buffer
 
 
 def _get_gateway() -> GatewayService:
@@ -62,6 +73,14 @@ def _get_anchor() -> AnchorSink:
     if _anchor is None:
         _anchor = create_anchor_sink()
     return _anchor
+
+
+def _get_liveness() -> LivenessManager:
+    global _liveness
+    if _liveness is None:
+        interval = int(os.environ.get("ATTESTATION_INTERVAL", "3600"))
+        _liveness = LivenessManager(attestation_interval=interval)
+    return _liveness
 
 
 # --- Input size limits ---
@@ -216,6 +235,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup self-check (non-fatal): {e}")
 
+    # Start evidence buffer if hot path mode is async
+    global _evidence_buffer
+    if HOT_PATH_MODE == "async":
+        _evidence_buffer = EvidenceBuffer(store=store)
+        _evidence_buffer.start()
+        logger.info("Hot path mode: ASYNC (evidence buffer enabled)")
+    else:
+        logger.info("Hot path mode: SYNC (blocking Firestore writes)")
+
     # Start Base L2 anchor scheduler if enabled (REST service only)
     anchor_task = None
     if os.environ.get("ANCHOR_TO_BASE", "").lower() == "true":
@@ -226,10 +254,44 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Base L2 anchoring disabled (set ANCHOR_TO_BASE=true to enable)")
 
+    # Start continuous attestation sweep (runs every attestation_interval)
+    liveness_task = None
+    liveness_mgr = _get_liveness()
+    if os.environ.get("CONTINUOUS_ATTESTATION", "").lower() != "false":
+        import asyncio
+
+        async def _liveness_sweep_loop():
+            while True:
+                await asyncio.sleep(liveness_mgr.attestation_interval)
+                try:
+                    summary = await liveness_mgr.sweep(gateway._registry, gateway.tenant)
+                    if summary["checked"] > 0:
+                        logger.info(
+                            "Liveness sweep: checked=%d passed=%d failed=%d",
+                            summary["checked"], summary["passed"], summary["failed"],
+                        )
+                        # Persist liveness records
+                        for record in liveness_mgr.list_all():
+                            try:
+                                await store.save_liveness(gateway.tenant, record.agent_id, record.to_dict())
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.warning(f"Liveness sweep error (non-fatal): {e}")
+
+        liveness_task = asyncio.create_task(_liveness_sweep_loop())
+        logger.info(f"Continuous attestation enabled (interval={liveness_mgr.attestation_interval}s)")
+    else:
+        logger.info("Continuous attestation disabled (set CONTINUOUS_ATTESTATION=true to enable)")
+
     yield
 
+    if _evidence_buffer:
+        await _evidence_buffer.stop()
     if anchor_task:
         anchor_task.cancel()
+    if liveness_task:
+        liveness_task.cancel()
 
 
 api_app = FastAPI(
@@ -294,11 +356,26 @@ async def root():
 @api_app.get("/health")
 async def health():
     gateway = _get_gateway()
-    return {
+    evidence_buf = _get_evidence_buffer()
+    result = {
         "status": "healthy",
         "tenant": gateway.tenant,
         "provider": "agent-authorization-gateway",
+        "hot_path_mode": HOT_PATH_MODE,
     }
+    if evidence_buf is not None:
+        result["evidence_buffer"] = evidence_buf.stats
+    return result
+
+
+@api_app.post("/evidence/flush")
+async def flush_evidence():
+    """Force-drain the evidence buffer to Firestore. No-op in sync mode."""
+    evidence_buf = _get_evidence_buffer()
+    if evidence_buf is None:
+        return {"status": "noop", "reason": "sync mode — no buffer", "mode": HOT_PATH_MODE}
+    count = await evidence_buf.flush()
+    return {"status": "flushed", "persisted": count, **evidence_buf.stats}
 
 
 @api_app.post("/authorize", response_model=AuthorizeResponse)
@@ -309,8 +386,27 @@ async def authorize(req: AuthorizeRequest):
     DPoP identity proof in the service layer before evaluating policy.
     Calls without proof are rejected with 401 NO_PROOF.
     """
+    decision_start = time.time()
     gateway = _get_gateway()
     store = _get_store()
+    liveness_mgr = _get_liveness()
+
+    # Lazy liveness check: if the agent has a liveness record and it's stale,
+    # check policy to decide whether to deny. This happens BEFORE DPoP verification
+    # so that suspended agents are rejected early.
+    liveness_record = liveness_mgr.get(req.agent_id)
+    if liveness_record and liveness_record.should_deny_authorization():
+        raise HTTPException(
+            403,
+            detail={
+                "error": "LIVENESS_" + liveness_record.state.value,
+                "message": f"Agent '{req.agent_id}' liveness is {liveness_record.state.value}. "
+                           f"Re-verification required ({liveness_record.consecutive_failures} consecutive failures).",
+                "liveness_state": liveness_record.state.value,
+                "consecutive_failures": liveness_record.consecutive_failures,
+                "last_failure_reason": liveness_record.last_failure_reason,
+            },
+        )
 
     # DPoP verification happens inside gateway.authorize() — single chokepoint
     try:
@@ -335,13 +431,22 @@ async def authorize(req: AuthorizeRequest):
             "parameters": req.parameters,
         },
     }
-    try:
-        await store.save_receipt(gateway.tenant, enriched)
-        await store.save_stats(gateway.tenant, gateway.get_chain_stats())
-        await store.save_rate_limits(gateway.tenant, gateway._policy_engine._rate_counters)
-    except Exception as e:
-        logger.exception(f"RECEIPT_PERSIST_FAILED: {e}")
-        raise HTTPException(500, "Receipt could not be persisted. Token withheld to prevent authorization without audit trail.")
+
+    evidence_buf = _get_evidence_buffer()
+    if evidence_buf is not None:
+        # HOT PATH: non-blocking enqueue, return immediately
+        evidence_buf.enqueue("receipt", gateway.tenant, enriched)
+        evidence_buf.enqueue("stats", gateway.tenant, gateway.get_chain_stats())
+        evidence_buf.enqueue("rate_limits", gateway.tenant, gateway._policy_engine._rate_counters)
+    else:
+        # SYNC PATH: blocking Firestore writes (default)
+        try:
+            await store.save_receipt(gateway.tenant, enriched)
+            await store.save_stats(gateway.tenant, gateway.get_chain_stats())
+            await store.save_rate_limits(gateway.tenant, gateway._policy_engine._rate_counters)
+        except Exception as e:
+            logger.exception(f"RECEIPT_PERSIST_FAILED: {e}")
+            raise HTTPException(500, "Receipt could not be persisted. Token withheld to prevent authorization without audit trail.")
 
     # Anchor Merkle root
     try:
@@ -357,9 +462,13 @@ async def authorize(req: AuthorizeRequest):
     except Exception as e:
         logger.warning(f"Anchor warning: {e}")
 
-    logger.info(f"authorize: agent={req.agent_id} action={req.action} resource={req.resource} decision={response.decision}")
+    decision_ms = round((time.time() - decision_start) * 1000, 1)
+    logger.info(
+        "authorize: agent=%s action=%s resource=%s decision=%s latency=%.1fms mode=%s",
+        req.agent_id, req.action, req.resource, response.decision, decision_ms, HOT_PATH_MODE,
+    )
 
-    return AuthorizeResponse(
+    resp = AuthorizeResponse(
         decision=response.decision,
         reason_codes=response.reason_codes,
         token=response.token,
@@ -367,6 +476,11 @@ async def authorize(req: AuthorizeRequest):
         action_digest=response.action_digest,
         receipt_hash=response.receipt_hash,
     )
+    from fastapi.responses import JSONResponse as _JR
+    json_resp = _JR(content=resp.model_dump())
+    json_resp.headers["X-Gate-Decision-Ms"] = str(decision_ms)
+    json_resp.headers["X-Gate-Hot-Path"] = HOT_PATH_MODE
+    return json_resp
 
 
 @api_app.post("/authorize/dry-run")
@@ -840,8 +954,27 @@ async def register_agent(req: AgentRegisterRequest):
     )
 
     try:
-        agent = gateway._registry.register(req.agent_id, req.public_key)
+        agent = gateway._registry.register(
+            req.agent_id, req.public_key,
+            live_challenge_url=req.live_challenge_url,
+        )
         from datetime import datetime, timezone
+
+        # Seed the liveness record for continuous attestation
+        liveness_mgr = _get_liveness()
+        liveness_record = liveness_mgr.get_or_create(req.agent_id, req.live_challenge_url)
+        if live_result["status"] == "verified":
+            liveness_record.record_success()
+        elif req.live_challenge_url:
+            liveness_record.record_failure(live_result.get("reason", "initial check failed"))
+
+        # Persist liveness state
+        store = _get_store()
+        try:
+            await store.save_liveness(gateway.tenant, req.agent_id, liveness_record.to_dict())
+        except Exception:
+            pass
+
         return {
             "status": "registered",
             "agent_id": agent.agent_id,
@@ -857,6 +990,7 @@ async def register_agent(req: AgentRegisterRequest):
                 datetime.now(timezone.utc).isoformat()
                 if live_result["status"] == "verified" else None
             ),
+            "liveness_state": liveness_record.state.value,
         }
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")
@@ -864,9 +998,10 @@ async def register_agent(req: AgentRegisterRequest):
 
 @api_app.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str):
-    """Delete an agent's registration."""
+    """Delete an agent's registration and liveness record."""
     try:
         _get_gateway()._registry.revoke(agent_id)
+        _get_liveness().remove(agent_id)
         return {"status": "deleted", "agent_id": agent_id}
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -874,8 +1009,127 @@ async def delete_agent(agent_id: str):
 
 @api_app.get("/agents")
 async def list_agents():
-    """List all registered agents."""
-    return {"agents": _get_gateway()._registry.list_agents()}
+    """List all registered agents with liveness state."""
+    agents = _get_gateway()._registry.list_agents()
+    liveness_mgr = _get_liveness()
+    for agent in agents:
+        record = liveness_mgr.get(agent["agent_id"])
+        if record:
+            agent["liveness_state"] = record.state.value
+            agent["liveness_verified_at"] = record.to_dict()["liveness_verified_at"]
+        else:
+            agent["liveness_state"] = "UNKNOWN"
+            agent["liveness_verified_at"] = None
+    return {"agents": agents}
+
+
+# --- Continuous Attestation (Liveness) endpoints ---
+
+@api_app.get("/agents/liveness")
+async def list_agent_liveness():
+    """Get liveness state for all registered agents."""
+    liveness_mgr = _get_liveness()
+    records = liveness_mgr.list_all()
+    summary = {
+        "LIVE": sum(1 for r in records if r.state == LivenessState.LIVE),
+        "WARNING": sum(1 for r in records if r.state == LivenessState.WARNING),
+        "STALE": sum(1 for r in records if r.state == LivenessState.STALE),
+        "SUSPENDED": sum(1 for r in records if r.state == LivenessState.SUSPENDED),
+        "UNKNOWN": sum(1 for r in records if r.state == LivenessState.UNKNOWN),
+    }
+    return {
+        "agents": [r.to_dict() for r in records],
+        "summary": summary,
+        "attestation_interval": liveness_mgr.attestation_interval,
+    }
+
+
+@api_app.get("/agents/{agent_id}/liveness")
+async def get_agent_liveness(agent_id: str):
+    """Get detailed liveness state for a specific agent."""
+    liveness_mgr = _get_liveness()
+    record = liveness_mgr.get(agent_id)
+    if record is None:
+        raise HTTPException(404, f"No liveness record for agent '{agent_id}'")
+    return record.to_dict()
+
+
+@api_app.post("/agents/{agent_id}/liveness/check")
+async def check_agent_liveness(agent_id: str):
+    """Trigger an immediate liveness re-challenge for a specific agent.
+
+    Useful for manual verification or after incident response.
+    Updates the agent's liveness state based on the result.
+    """
+    gateway = _get_gateway()
+    store = _get_store()
+    liveness_mgr = _get_liveness()
+
+    agent = gateway._registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(404, f"Agent '{agent_id}' is not registered")
+
+    record = liveness_mgr.get(agent_id)
+    if record is None:
+        raise HTTPException(404, f"No liveness record for agent '{agent_id}'")
+
+    if not record.live_challenge_url:
+        return {
+            "status": "skipped",
+            "reason": "Agent has no live_challenge_url configured",
+            "liveness_state": record.state.value,
+        }
+
+    pub_bytes = agent.public_key.public_bytes_raw()
+    jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode(),
+    }
+
+    record = await liveness_mgr.check_agent(agent_id, jwk, gateway.tenant)
+
+    # Persist updated liveness state
+    try:
+        await store.save_liveness(gateway.tenant, agent_id, record.to_dict())
+    except Exception:
+        pass
+
+    return {
+        "status": "checked",
+        "liveness_state": record.state.value,
+        "consecutive_failures": record.consecutive_failures,
+        "total_checks": record.total_checks,
+        "liveness_verified_at": record.to_dict()["liveness_verified_at"],
+        "last_failure_reason": record.last_failure_reason,
+    }
+
+
+@api_app.post("/agents/liveness/sweep")
+async def trigger_liveness_sweep():
+    """Trigger an immediate liveness sweep of all agents.
+
+    Re-challenges every agent whose liveness is stale (older than
+    the attestation interval). Returns a summary of results.
+    """
+    gateway = _get_gateway()
+    store = _get_store()
+    liveness_mgr = _get_liveness()
+
+    summary = await liveness_mgr.sweep(gateway._registry, gateway.tenant)
+
+    # Persist all updated records
+    for record in liveness_mgr.list_all():
+        try:
+            await store.save_liveness(gateway.tenant, record.agent_id, record.to_dict())
+        except Exception:
+            pass
+
+    return {
+        "status": "completed",
+        **summary,
+        "attestation_interval": liveness_mgr.attestation_interval,
+    }
 
 
 # --- Action endpoints ---
@@ -1018,7 +1272,10 @@ from enum import Enum
 
 class ResourceType(str, Enum):
     DB = "db"
-    # Future: API = "api", STORAGE = "storage", QUEUE = "queue"
+    API = "api"
+    STORAGE = "storage"
+    QUEUE = "queue"
+    FUNCTION = "function"
 
 
 class ResourceRegisterRequest(BaseModel):
@@ -1068,39 +1325,55 @@ def _get_resource_registry():
     return gateway._resource_registry
 
 
-async def _verify_resource_reachability(reachability_url: str | None) -> dict:
-    """Probe a resource's reachability endpoint."""
-    if not reachability_url:
-        return {"status": "skipped", "reason": "no reachability_url provided"}
-    try:
-        headers = {}
-        try:
-            from google.oauth2 import id_token as google_id_token
-            from google.auth.transport.requests import Request
-            from urllib.parse import urlparse
-            parsed = urlparse(reachability_url)
-            audience = f"{parsed.scheme}://{parsed.netloc}"
-            token = google_id_token.fetch_id_token(Request(), audience)
-            headers["Authorization"] = f"Bearer {token}"
-        except Exception:
-            pass
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(reachability_url, headers=headers)
-            if resp.status_code != 200:
-                return {"status": "failed", "reason": f"returned {resp.status_code}"}
-            return {"status": "verified", "reason": "reachability endpoint returned 200 OK"}
-    except Exception as e:
-        return {"status": "failed", "reason": f"fetch error: {e}"}
+async def _verify_resource(
+    resource_type: str,
+    reachability_url: str | None,
+    metadata: dict | None,
+) -> dict:
+    """Dispatch to the type-specific resource verifier.
+
+    Each resource type (db, api, storage, queue, function) has its own
+    verifier that knows how to confirm the resource exists. Falls back
+    to a generic URL probe if no type-specific verifier is registered.
+    """
+    from .verification import get_verifier, VerificationResult
+
+    verifier = get_verifier(resource_type)
+    if verifier:
+        result = await verifier.verify(reachability_url, metadata)
+        return result.to_dict()
+
+    # Fallback: generic URL probe for unknown types
+    if reachability_url:
+        from .verification._http import probe_url
+        result = await probe_url(reachability_url, resource_type)
+        return result.to_dict()
+
+    return {"status": "skipped", "reason": f"No verifier for type '{resource_type}' and no reachability_url"}
 
 
 @api_app.post("/resources/register")
 async def register_resource(req: ResourceRegisterRequest, request: Request):
-    """Register a resource with optional reachability verification."""
+    """Register a resource with type-specific existence verification.
+
+    Each resource type (db, api, storage, queue, function) has its own
+    verifier. Verification is non-blocking — a failed or skipped verification
+    does not prevent registration, but the result is recorded.
+    """
     from .resources import ResourceConflict
     caller = _get_caller_identity(request)
     registry = _get_resource_registry()
 
-    reach_result = await _verify_resource_reachability(req.reachability_url)
+    # Run verification with full metadata (including ephemeral credentials)
+    verification = await _verify_resource(
+        resource_type=req.resource_type.value,
+        reachability_url=req.reachability_url,
+        metadata=req.metadata,
+    )
+
+    # Strip verification_credentials before persisting — never store secrets
+    persist_metadata = dict(req.metadata) if req.metadata else {}
+    persist_metadata.pop("verification_credentials", None)
 
     try:
         result = registry.register(
@@ -1109,23 +1382,39 @@ async def register_resource(req: ResourceRegisterRequest, request: Request):
             description=req.description,
             resource_type=req.resource_type,
             owner=req.owner,
-            metadata=req.metadata,
+            metadata=persist_metadata or None,
             registered_by=caller or "anonymous",
         )
         return {
             "status": "registered",
             "resource_id": result["resource_id"],
+            "resource_type": req.resource_type.value,
             "display_name": result["display_name"],
             "version": result["version"],
             "registered_at": result["registered_at"],
             "reachability_url": req.reachability_url,
-            "reachability_verification": reach_result["status"],
-            "reachability_verification_reason": reach_result.get("reason"),
+            "verification": verification["status"],
+            "verification_reason": verification.get("reason"),
+            "verification_details": verification.get("details"),
         }
     except ResourceConflict as e:
         raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@api_app.get("/resources/types")
+async def list_resource_types():
+    """List all supported resource types and their verification metadata."""
+    from .verification import get_verifier, list_resource_types as _list_types
+    types = []
+    for rt in _list_types():
+        v = get_verifier(rt)
+        types.append({
+            "type": rt,
+            "required_metadata_fields": v.required_metadata_fields if v else [],
+        })
+    return {"resource_types": types, "count": len(types)}
 
 
 @api_app.get("/resources")

@@ -57,6 +57,15 @@ class ReceiptStore(ABC):
     @abstractmethod
     async def get_anchor_record(self, tenant: str, tx_hash: str) -> dict | None: ...
 
+    @abstractmethod
+    async def save_liveness(self, tenant: str, agent_id: str, record: dict) -> None: ...
+
+    @abstractmethod
+    async def get_liveness(self, tenant: str, agent_id: str) -> dict | None: ...
+
+    @abstractmethod
+    async def list_liveness(self, tenant: str) -> list[dict]: ...
+
 
 class InMemoryStore(ReceiptStore):
     """In-memory receipt store for local development and testing."""
@@ -66,6 +75,7 @@ class InMemoryStore(ReceiptStore):
         self._receipt_index: dict[str, dict] = {}
         self._keys: dict[str, dict] = {}
         self._stats: dict[str, dict] = {}
+        self._liveness: dict[str, dict] = {}
 
     async def save_receipt(self, tenant: str, receipt: dict) -> None:
         if tenant not in self._receipts:
@@ -119,6 +129,16 @@ class InMemoryStore(ReceiptStore):
             if r.get("tx_hash") == tx_hash:
                 return r
         return None
+
+    async def save_liveness(self, tenant: str, agent_id: str, record: dict) -> None:
+        self._liveness[f"{tenant}:{agent_id}"] = record
+
+    async def get_liveness(self, tenant: str, agent_id: str) -> dict | None:
+        return self._liveness.get(f"{tenant}:{agent_id}")
+
+    async def list_liveness(self, tenant: str) -> list[dict]:
+        prefix = f"{tenant}:"
+        return [v for k, v in self._liveness.items() if k.startswith(prefix)]
 
 
 class FirestoreStore(ReceiptStore):
@@ -219,6 +239,26 @@ class FirestoreStore(ReceiptStore):
             .collection("anchors").document(doc_id)
         doc = await doc_ref.get()
         return doc.to_dict() if doc.exists else None
+
+    async def save_liveness(self, tenant: str, agent_id: str, record: dict) -> None:
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("agent_liveness").document(agent_id)
+        await doc_ref.set({**record, "updated_at": time.time()})
+
+    async def get_liveness(self, tenant: str, agent_id: str) -> dict | None:
+        doc_ref = self._db.collection("tenants").document(tenant) \
+            .collection("agent_liveness").document(agent_id)
+        doc = await doc_ref.get()
+        return doc.to_dict() if doc.exists else None
+
+    async def list_liveness(self, tenant: str) -> list[dict]:
+        collection_ref = self._db.collection("tenants").document(tenant) \
+            .collection("agent_liveness")
+        docs = collection_ref.stream()
+        records = []
+        async for doc in docs:
+            records.append(doc.to_dict())
+        return records
 
 
 def create_store() -> ReceiptStore:
