@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Literal
@@ -50,11 +51,29 @@ def write_audit_report(
         "auditor_kid": key.kid,
         "schema_version": "auditor-v0.1",
     }
-    sig = key.sign(_canonicalize(body))
+    body_bytes = _canonicalize(body)
+    sig = key.sign(body_bytes)
+    artifact_hash = "sha256:" + hashlib.sha256(body_bytes).hexdigest()
     envelope = {
         "body": body,
         "signature": "ed25519:" + sig.hex(),
+        "artifact_hash": artifact_hash,
     }
     db.collection("tenants").document(tenant) \
         .collection("audit_reports").document(audit_id).set(envelope)
+
+    # Append to unified artifact log for Merkle anchoring
+    try:
+        from ..artifact_log import ArtifactLog
+        log = ArtifactLog(tenant=tenant, firestore_client=db)
+        log.append(
+            artifact_type="audit_report",
+            artifact_id=audit_id,
+            artifact_hash=artifact_hash,
+            agent_kid=key.kid,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Artifact log append failed (non-fatal): %s", e)
+
     return envelope

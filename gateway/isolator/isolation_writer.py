@@ -7,7 +7,9 @@ were taken. Signed by the Isolator's own Ed25519 key.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict
@@ -48,11 +50,27 @@ def write_isolation_record(
         "schema_version": "isolation-record-v0.1",
         "isolator_kid": key.kid,
     }
-    sig = key.sign(_canonicalize(body))
+    body_bytes = _canonicalize(body)
+    sig = key.sign(body_bytes)
+    artifact_hash = "sha256:" + hashlib.sha256(body_bytes).hexdigest()
     envelope = {
         "body": body,
         "signature": "ed25519:" + sig.hex(),
+        "artifact_hash": artifact_hash,
     }
     db.collection("tenants").document(tenant) \
         .collection("isolation_records").document(isolation_id).set(envelope)
+
+    try:
+        from ..artifact_log import ArtifactLog
+        log = ArtifactLog(tenant=tenant, firestore_client=db)
+        log.append(
+            artifact_type="isolation_record",
+            artifact_id=isolation_id,
+            artifact_hash=artifact_hash,
+            agent_kid=key.kid,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning("Artifact log append failed (non-fatal): %s", e)
+
     return envelope

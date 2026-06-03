@@ -29,6 +29,7 @@ import httpx
 from .anchor import AnchorRecord, AnchorSink, create_anchor_sink
 from .evidence_buffer import EvidenceBuffer
 from .gateway_service import GatewayService
+from .artifact_log import ArtifactLog
 from .liveness import LivenessManager, LivenessState
 from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
@@ -44,6 +45,7 @@ _gateway: GatewayService | None = None
 _store: ReceiptStore | None = None
 _anchor: AnchorSink | None = None
 _liveness: LivenessManager | None = None
+_artifact_log: ArtifactLog | None = None
 _evidence_buffer: EvidenceBuffer | None = None
 
 # Hot path mode: "sync" (default, blocking Firestore) or "async" (non-blocking)
@@ -73,6 +75,21 @@ def _get_anchor() -> AnchorSink:
     if _anchor is None:
         _anchor = create_anchor_sink()
     return _anchor
+
+
+def _get_artifact_log() -> ArtifactLog:
+    global _artifact_log
+    if _artifact_log is None:
+        gateway = _get_gateway()
+        firestore_db = None
+        if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+            try:
+                from google.cloud import firestore
+                firestore_db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+            except Exception:
+                pass
+        _artifact_log = ArtifactLog(tenant=gateway.tenant, firestore_client=firestore_db)
+    return _artifact_log
 
 
 def _get_liveness() -> LivenessManager:
@@ -215,6 +232,14 @@ async def lifespan(app: FastAPI):
                 gateway._receipt_chain._seq = last_seq
                 gateway._receipt_chain._prev_receipt_hash = last_hash
                 logger.info(f"Resumed chain at seq={last_seq}")
+
+        # Hydrate agent registry from Firestore (survives cold starts)
+        try:
+            loaded = gateway._registry.load_all()
+            if loaded:
+                logger.info(f"Hydrated agent registry: {loaded} agents from Firestore")
+        except Exception as e:
+            logger.warning(f"Agent registry hydration (non-fatal): {e}")
 
         # Merge this instance's key into the shared key set
         my_key = gateway.get_public_key_jwk()
@@ -447,6 +472,18 @@ async def authorize(req: AuthorizeRequest):
         except Exception as e:
             logger.exception(f"RECEIPT_PERSIST_FAILED: {e}")
             raise HTTPException(500, "Receipt could not be persisted. Token withheld to prevent authorization without audit trail.")
+
+    # Append receipt to unified artifact log for Merkle anchoring
+    try:
+        art_log = _get_artifact_log()
+        art_log.append(
+            artifact_type="receipt",
+            artifact_id=response.receipt_hash,
+            artifact_hash=response.receipt_hash,
+            agent_kid=gateway._kid,
+        )
+    except Exception as e:
+        logger.warning(f"Artifact log append (non-fatal): {e}")
 
     # Anchor Merkle root
     try:
@@ -1514,6 +1551,65 @@ async def verify_anchor(tx_hash: str):
         return result
     except Exception as e:
         raise HTTPException(502, f"Could not verify anchor on Base: {e}")
+
+
+@api_app.get("/artifacts/log")
+async def get_artifact_log(
+    after_seq: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Get the unified artifact log — all signed artifacts in chronological order.
+
+    This log covers receipts, audit reports, policy proposals, incident reports,
+    and isolation records. It is the input to the unified Merkle tree that gets
+    anchored to Base L2.
+    """
+    art_log = _get_artifact_log()
+    entries = art_log.get_entries_since(after_seq, limit=limit)
+    return {
+        "entries": [e.to_dict() for e in entries],
+        "count": len(entries),
+        "head_seq": art_log.head_seq,
+        "has_more": len(entries) == limit,
+    }
+
+
+@api_app.get("/artifacts/proof/{artifact_hash}")
+async def get_artifact_inclusion_proof(artifact_hash: str):
+    """Get a Merkle inclusion proof for a specific artifact.
+
+    The proof allows a verifier to confirm that the artifact was included
+    in a batch that was anchored to Base L2. The verifier recomputes
+    the root from the leaf using the proof path and compares it to the
+    on-chain root.
+    """
+    from .merkle import compute_inclusion_proof
+
+    art_log = _get_artifact_log()
+    # Find the artifact in the log
+    # Get all entries and search for the matching hash
+    entries = art_log.get_entries_since(0, limit=10000)
+    all_hashes_hex = [e.artifact_hash.removeprefix("sha256:") for e in entries]
+    target_hex = artifact_hash.removeprefix("sha256:")
+
+    if target_hex not in all_hashes_hex:
+        raise HTTPException(404, f"Artifact hash not found in the unified log")
+
+    proof = compute_inclusion_proof(all_hashes_hex, target_hex)
+    if proof is None:
+        raise HTTPException(404, "Could not compute inclusion proof")
+
+    # Find the entry metadata
+    idx = all_hashes_hex.index(target_hex)
+    entry = entries[idx]
+
+    return {
+        **proof,
+        "artifact_type": entry.artifact_type,
+        "artifact_id": entry.artifact_id,
+        "agent_kid": entry.agent_kid,
+        "log_seq": entry.seq,
+    }
 
 
 @api_app.post("/tamper-test")
