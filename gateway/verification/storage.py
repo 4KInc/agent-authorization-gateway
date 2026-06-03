@@ -2,32 +2,21 @@
 
 Verification strategy (in priority order):
 1. reachability_url → HTTP GET probe (live)
-2. provider=gcs + bucket → GCS JSON API authenticated metadata read (live)
-3. provider=s3 + bucket + region + verification_credentials → AWS S3 HEAD bucket (live)
-4. provider=azure_blob + account + container + verification_credentials → Azure HEAD (live)
-5. bucket or provider metadata present → "metadata_only"
-6. Nothing → "skipped"
-
-Supported metadata fields:
-- bucket: Bucket or container name
-- prefix: Object key prefix (path scope)
-- provider: Cloud provider ("gcs", "s3", "azure_blob")
-- project_id: GCP project ID (for GCS)
-- region: AWS region (for S3, e.g., "us-east-1")
-- account: Azure storage account name (for azure_blob)
-- content_classification: Data classification ("pii", "phi", "public")
-
-Verification credentials (ephemeral, never persisted):
-- verification_credentials.aws_access_key_id
-- verification_credentials.aws_secret_access_key
-- verification_credentials.aws_session_token (optional, for temporary creds)
-- verification_credentials.bearer_token (for Azure or custom endpoints)
+2. provider=gcs + bucket → GCS JSON API (live, GCP ADC, 403=exists)
+3. provider=s3 + bucket + verification_credentials → AWS SigV4 HEAD (live)
+4. provider=s3 + bucket (no creds) → unauthenticated HEAD (live, 403=exists)
+5. provider=azure_blob + account + container + creds → Bearer HEAD (live)
+6. bucket or provider metadata present → "metadata_only"
+7. Nothing → "skipped"
 """
 
 from __future__ import annotations
 
 from .base import ResourceVerifier, VerificationResult, register_verifier
-from ._http import probe_url, probe_gcp_api, probe_aws_api, probe_with_bearer
+from ._http import (
+    probe_url, probe_gcp_api, probe_aws_api,
+    probe_with_bearer, probe_url_unauthenticated,
+)
 
 
 class StorageVerifier(ResourceVerifier):
@@ -51,8 +40,7 @@ class StorageVerifier(ResourceVerifier):
         bucket = meta.get("bucket", "")
         provider = meta.get("provider", "")
 
-        # 2. GCS: authenticated metadata read via Google APIs
-        #    403 = bucket exists but SA lacks storage.buckets.get (still proves existence)
+        # 2. GCS: authenticated metadata read (403=exists)
         if bucket and provider == "gcs":
             api_url = f"https://storage.googleapis.com/storage/v1/b/{bucket}"
             result = await probe_gcp_api(api_url, "GCS bucket", accept_statuses={200, 403})
@@ -60,7 +48,7 @@ class StorageVerifier(ResourceVerifier):
             result.details["provider"] = "gcs"
             return result
 
-        # 3. S3: HEAD bucket with caller-supplied AWS credentials
+        # 3. S3 with caller-supplied AWS credentials
         region = meta.get("region", "us-east-1")
         if bucket and provider == "s3" and creds:
             s3_url = f"https://{bucket}.s3.{region}.amazonaws.com/"
@@ -74,7 +62,20 @@ class StorageVerifier(ResourceVerifier):
             result.details["region"] = region
             return result
 
-        # 4. Azure Blob: HEAD container with caller-supplied bearer token
+        # 4. S3 without credentials — unauthenticated HEAD (403=exists, 404=doesn't)
+        if bucket and provider == "s3":
+            s3_url = f"https://{bucket}.s3.amazonaws.com/"
+            result = await probe_url_unauthenticated(s3_url, "S3 bucket")
+            # S3 returns 403 for existing private buckets, 404 for nonexistent
+            if result.status == "verified" and result.details.get("status_code") == 404:
+                result.status = "failed"
+                result.reason = f"S3 bucket '{bucket}' not found (returned 404)"
+            else:
+                result.details["bucket"] = bucket
+                result.details["provider"] = "s3"
+            return result
+
+        # 5. Azure Blob with caller-supplied bearer token
         account = meta.get("account", "")
         if bucket and provider == "azure_blob" and account and creds.get("bearer_token"):
             azure_url = f"https://{account}.blob.core.windows.net/{bucket}?restype=container"
@@ -88,7 +89,20 @@ class StorageVerifier(ResourceVerifier):
             result.details["account"] = account
             return result
 
-        # 5. Descriptive metadata — no live probe
+        # 6. Azure Blob without creds — unauthenticated HEAD
+        if bucket and provider == "azure_blob" and account:
+            azure_url = f"https://{account}.blob.core.windows.net/{bucket}?restype=container"
+            result = await probe_url_unauthenticated(azure_url, "Azure Blob container")
+            if result.status == "verified" and result.details.get("status_code") == 404:
+                result.status = "failed"
+                result.reason = f"Azure container '{bucket}' not found in account '{account}'"
+            else:
+                result.details["container"] = bucket
+                result.details["provider"] = "azure_blob"
+                result.details["account"] = account
+            return result
+
+        # 7. Descriptive metadata only
         if bucket or provider:
             return VerificationResult(
                 status="metadata_only",
@@ -98,7 +112,7 @@ class StorageVerifier(ResourceVerifier):
                          "content_classification": meta.get("content_classification", "")},
             )
 
-        # 6. Nothing
+        # 8. Nothing
         return VerificationResult(
             status="skipped",
             reason="No reachability_url or storage metadata provided",

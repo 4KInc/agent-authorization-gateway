@@ -1,24 +1,18 @@
 """Database resource verifier.
 
 Verification strategy (in priority order):
-1. reachability_url → HTTP GET probe (live, returns "verified" or "failed")
-2. provider=firestore + project_id → Firestore REST API metadata read (live)
-3. provider=cloudsql + project_id + instance → Cloud SQL Admin API (live)
-4. engine or connection_string metadata present → "metadata_only" (no live probe)
-5. Nothing provided → "skipped"
-
-Supported metadata fields:
-- engine: Database engine (e.g., "postgresql", "mysql", "firestore", "bigquery")
-- connection_string: Connection URL (recorded but never used for live connection)
-- provider: Cloud provider (e.g., "firestore", "cloudsql", "alloydb")
-- project_id: GCP project ID (enables live verification for GCP databases)
-- instance: Cloud SQL instance name
+1. reachability_url → HTTP GET probe (live)
+2. provider=firestore + project_id → Firestore REST API (live, GCP ADC)
+3. provider=cloudsql + project_id + instance → Cloud SQL Admin API (live, GCP ADC)
+4. connection_string present → TCP connect to host:port (live, no auth needed)
+5. engine or provider metadata present → "metadata_only"
+6. Nothing → "skipped"
 """
 
 from __future__ import annotations
 
 from .base import ResourceVerifier, VerificationResult, register_verifier
-from ._http import probe_url, probe_gcp_api
+from ._http import probe_url, probe_gcp_api, probe_tcp, parse_connection_string
 
 
 class DatabaseVerifier(ResourceVerifier):
@@ -47,32 +41,40 @@ class DatabaseVerifier(ResourceVerifier):
         if provider == "firestore" and project_id:
             api_url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)"
             result = await probe_gcp_api(api_url, "Firestore database")
-            if result.status == "verified":
-                result.details["provider"] = "firestore"
-                result.details["project_id"] = project_id
+            result.details["provider"] = "firestore"
+            result.details["project_id"] = project_id
             return result
 
         # 3. Cloud SQL: check instance metadata
         instance = meta.get("instance", "")
         if provider == "cloudsql" and project_id and instance:
             api_url = f"https://sqladmin.googleapis.com/v1/projects/{project_id}/instances/{instance}"
-            result = await probe_gcp_api(api_url, "Cloud SQL instance")
-            if result.status == "verified":
-                result.details["provider"] = "cloudsql"
-                result.details["project_id"] = project_id
-                result.details["instance"] = instance
+            result = await probe_gcp_api(api_url, "Cloud SQL instance", accept_statuses={200, 403})
+            result.details["provider"] = "cloudsql"
+            result.details["project_id"] = project_id
+            result.details["instance"] = instance
             return result
 
-        # 4. Metadata present but no live probe possible
-        if engine or conn or provider:
+        # 4. Connection string → TCP probe to host:port
+        if conn:
+            parsed = parse_connection_string(conn)
+            if parsed:
+                host, port = parsed
+                result = await probe_tcp(host, port, f"{engine or 'database'} server")
+                result.details["engine"] = engine
+                result.details["provider"] = provider
+                return result
+
+        # 5. Metadata present but no live probe possible
+        if engine or provider:
             return VerificationResult(
                 status="metadata_only",
-                reason=f"Database metadata recorded (engine={engine or 'unspecified'}). No live probe performed.",
-                details={"engine": engine, "provider": provider,
-                         "has_connection_string": bool(conn)},
+                reason=f"Database metadata recorded (engine={engine or 'unspecified'}). "
+                       f"Provide a connection_string for TCP verification or a GCP provider for API verification.",
+                details={"engine": engine, "provider": provider},
             )
 
-        # 5. Nothing provided
+        # 6. Nothing
         return VerificationResult(
             status="skipped",
             reason="No reachability_url or database metadata provided",

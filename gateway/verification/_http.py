@@ -8,6 +8,7 @@ Three auth strategies:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -315,8 +316,110 @@ async def probe_with_bearer(
     except Exception as e:
         return VerificationResult(
             status="failed",
-            reason=f"{resource_label} probe error: {type(e).__name__}: {e}",
+            reason=f"{resource_label} probe error (basic_auth): {type(e).__name__}: {e}",
         )
+
+
+async def probe_tcp(
+    host: str,
+    port: int,
+    resource_label: str,
+    timeout: float = 5.0,
+) -> VerificationResult:
+    """Test TCP connectivity to a host:port.
+
+    Proves the server process is listening. Does not authenticate or
+    send any application-layer data.
+    """
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=timeout,
+        )
+        writer.close()
+        await writer.wait_closed()
+        return VerificationResult(
+            status="verified",
+            reason=f"{resource_label} is reachable at {host}:{port} (TCP handshake succeeded)",
+            details={"host": host, "port": port},
+        )
+    except asyncio.TimeoutError:
+        return VerificationResult(
+            status="failed",
+            reason=f"{resource_label} at {host}:{port} timed out (>{timeout}s)",
+            details={"host": host, "port": port},
+        )
+    except ConnectionRefusedError:
+        return VerificationResult(
+            status="failed",
+            reason=f"{resource_label} at {host}:{port} refused connection",
+            details={"host": host, "port": port},
+        )
+    except OSError as e:
+        return VerificationResult(
+            status="failed",
+            reason=f"{resource_label} at {host}:{port} unreachable: {e}",
+            details={"host": host, "port": port},
+        )
+
+
+async def probe_url_unauthenticated(
+    url: str,
+    resource_label: str,
+    method: str = "HEAD",
+) -> VerificationResult:
+    """Probe a URL without any authentication.
+
+    Any HTTP response (including 401, 403) proves the endpoint exists.
+    Only DNS failures, timeouts, and connection errors count as "failed".
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+            resp = await client.request(method, url)
+            return VerificationResult(
+                status="verified",
+                reason=f"{resource_label} is reachable (returned {resp.status_code})",
+                details={"url": url, "status_code": resp.status_code},
+            )
+    except httpx.TimeoutException:
+        return VerificationResult(
+            status="failed",
+            reason=f"{resource_label} at {url} timed out (>5s)",
+            details={"url": url},
+        )
+    except Exception as e:
+        return VerificationResult(
+            status="failed",
+            reason=f"{resource_label} at {url} unreachable: {type(e).__name__}: {e}",
+            details={"url": url},
+        )
+
+
+def parse_connection_string(conn_str: str) -> tuple[str, int] | None:
+    """Extract host and port from a database connection string.
+
+    Supports: postgresql://, mysql://, mongodb://, redis://, host:port
+    """
+    try:
+        parsed = urlparse(conn_str)
+        if parsed.hostname:
+            port = parsed.port
+            if port is None:
+                defaults = {
+                    "postgresql": 5432, "postgres": 5432,
+                    "mysql": 3306, "mariadb": 3306,
+                    "mongodb": 27017, "mongodb+srv": 27017,
+                    "redis": 6379, "rediss": 6379,
+                }
+                port = defaults.get(parsed.scheme, 0)
+            if port > 0:
+                return (parsed.hostname, port)
+        if ":" in conn_str and "/" not in conn_str:
+            parts = conn_str.rsplit(":", 1)
+            return (parts[0], int(parts[1]))
+    except Exception:
+        pass
+    return None
 
 
 async def probe_with_basic_auth(

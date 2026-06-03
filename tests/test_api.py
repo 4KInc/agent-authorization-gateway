@@ -734,8 +734,8 @@ def test_resource_types_endpoint():
     assert data["count"] == 5
 
 
-def test_register_api_resource_metadata_only():
-    """API resource with only metadata gets 'metadata_only' — not 'verified'."""
+def test_register_api_resource_with_base_url_attempts_probe():
+    """API with base_url should attempt live probe (not metadata_only)."""
     resp = client.post("/resources/register", json={
         "resource_id": "salesforce-crm-api",
         "display_name": "Salesforce CRM API",
@@ -746,12 +746,26 @@ def test_register_api_resource_metadata_only():
     data = resp.json()
     assert data["status"] == "registered"
     assert data["resource_type"] == "api"
+    # Attempted a live probe to base_url (will fail in test env but proves it tried)
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_register_api_resource_auth_only_metadata_only():
+    """API with only auth_type (no base_url) gets metadata_only."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "api-auth-only",
+        "display_name": "Auth Only API",
+        "resource_type": "api",
+        "metadata": {"auth_type": "oauth2"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
     assert data["verification"] == "metadata_only"
-    assert "No live probe" in data["verification_reason"]
 
 
-def test_register_storage_resource_metadata_only():
-    """Storage with non-GCS metadata gets 'metadata_only'."""
+def test_register_storage_s3_attempts_probe():
+    """S3 with bucket should attempt unauthenticated HEAD (not metadata_only)."""
     resp = client.post("/resources/register", json={
         "resource_id": "s3-compliance-bucket",
         "display_name": "S3 Compliance Bucket",
@@ -762,7 +776,9 @@ def test_register_storage_resource_metadata_only():
     data = resp.json()
     assert data["status"] == "registered"
     assert data["resource_type"] == "storage"
-    assert data["verification"] == "metadata_only"
+    # Attempted unauthenticated HEAD to s3 (will get some result)
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
 
 
 def test_register_queue_resource_metadata_only():
@@ -817,19 +833,32 @@ def test_verification_skipped_when_no_metadata():
     assert data["verification"] == "skipped"
 
 
-def test_db_resource_with_engine_metadata_only():
-    """DB with engine metadata but no live probe gets 'metadata_only'."""
+def test_db_with_connection_string_attempts_tcp():
+    """DB with connection_string should attempt TCP connect (not metadata_only)."""
     resp = client.post("/resources/register", json={
         "resource_id": "analytics-postgres",
         "display_name": "Analytics PostgreSQL",
         "resource_type": "db",
-        "metadata": {"engine": "postgresql", "connection_string": "postgresql://host/db"},
+        "metadata": {"engine": "postgresql", "connection_string": "postgresql://user:pass@localhost:5432/db"},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    # Attempted TCP connect (will fail in test env but proves it tried)
+    assert data["verification"] in ("verified", "failed")
+    assert data["verification"] != "metadata_only"
+
+
+def test_db_engine_only_metadata_only():
+    """DB with only engine (no connection_string, no provider) gets metadata_only."""
+    resp = client.post("/resources/register", json={
+        "resource_id": "db-engine-only",
+        "display_name": "Engine Only DB",
+        "resource_type": "db",
+        "metadata": {"engine": "postgresql"},
     })
     assert resp.status_code == 200
     data = resp.json()
     assert data["verification"] == "metadata_only"
-    assert "postgresql" in data["verification_reason"]
-    assert "No live probe" in data["verification_reason"]
 
 
 def test_gcs_storage_attempts_live_probe():

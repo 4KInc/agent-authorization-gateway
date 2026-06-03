@@ -2,28 +2,13 @@
 
 Verification strategy (in priority order):
 1. reachability_url → HTTP GET probe (live)
-2. provider=pubsub + project_id + topic → Pub/Sub Admin API (live, GCP ADC)
-3. provider=sqs + region + topic + verification_credentials → SQS GetQueueUrl (live)
-4. provider=rabbitmq + verification_credentials + management_url → RabbitMQ mgmt API (live)
-5. topic or provider metadata present → "metadata_only"
-6. Nothing → "skipped"
-
-Supported metadata fields:
-- topic: Topic or queue name
-- provider: Provider ("pubsub", "kafka", "sqs", "rabbitmq", "eventbridge")
-- project_id: GCP project ID (for Pub/Sub)
-- region: AWS region (for SQS)
-- account_id: AWS account ID (for SQS queue URL construction)
-- management_url: RabbitMQ management API base URL
-- vhost: RabbitMQ virtual host (default: "/")
-- subscription: Optional subscription name
-
-Verification credentials (ephemeral, never persisted):
-- verification_credentials.aws_access_key_id
-- verification_credentials.aws_secret_access_key
-- verification_credentials.aws_session_token
-- verification_credentials.username (RabbitMQ)
-- verification_credentials.password (RabbitMQ)
+2. provider=pubsub + project_id + topic → Pub/Sub Admin API (live, GCP ADC, 403=exists)
+3. provider=sqs + region + topic + account_id + creds → SQS API (live)
+4. provider=rabbitmq + management_url + creds → RabbitMQ mgmt API (live)
+5. provider=kafka + broker_host → TCP connect to broker (live)
+6. provider=sqs + region + topic (no creds) → unauthenticated HEAD (live, limited)
+7. topic or provider metadata present → "metadata_only"
+8. Nothing → "skipped"
 """
 
 from __future__ import annotations
@@ -31,7 +16,10 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from .base import ResourceVerifier, VerificationResult, register_verifier
-from ._http import probe_url, probe_gcp_api, probe_aws_api, probe_with_basic_auth
+from ._http import (
+    probe_url, probe_gcp_api, probe_aws_api,
+    probe_with_basic_auth, probe_tcp,
+)
 
 
 class QueueVerifier(ResourceVerifier):
@@ -57,8 +45,7 @@ class QueueVerifier(ResourceVerifier):
         project_id = meta.get("project_id", "")
         region = meta.get("region", "us-east-1")
 
-        # 2. Pub/Sub: authenticated topic metadata read (GCP ADC)
-        #    403 = topic exists but SA lacks pubsub.topics.get (still proves existence)
+        # 2. Pub/Sub: authenticated topic metadata read (403=exists)
         if topic and provider == "pubsub" and project_id:
             api_url = f"https://pubsub.googleapis.com/v1/projects/{project_id}/topics/{topic}"
             result = await probe_gcp_api(api_url, "Pub/Sub topic", accept_statuses={200, 403})
@@ -67,12 +54,10 @@ class QueueVerifier(ResourceVerifier):
             result.details["project_id"] = project_id
             return result
 
-        # 3. SQS: GetQueueUrl with caller-supplied AWS credentials
+        # 3. SQS with caller-supplied AWS credentials
         account_id = meta.get("account_id", "")
         if topic and provider == "sqs" and creds and account_id:
-            sqs_url = (
-                f"https://sqs.{region}.amazonaws.com/{account_id}/{topic}"
-            )
+            sqs_url = f"https://sqs.{region}.amazonaws.com/{account_id}/{topic}"
             result = await probe_aws_api(
                 sqs_url, "SQS queue",
                 region=region, service="sqs", creds=creds,
@@ -83,7 +68,7 @@ class QueueVerifier(ResourceVerifier):
             result.details["region"] = region
             return result
 
-        # 4. RabbitMQ: management API with basic auth
+        # 4. RabbitMQ management API with basic auth
         management_url = meta.get("management_url", "")
         vhost = meta.get("vhost", "/")
         if topic and provider == "rabbitmq" and management_url and creds.get("username"):
@@ -100,15 +85,34 @@ class QueueVerifier(ResourceVerifier):
             result.details["vhost"] = vhost
             return result
 
-        # 5. Descriptive metadata — no live probe
+        # 5. Kafka: TCP connect to broker
+        broker_host = meta.get("broker_host", "")
+        broker_port = int(meta.get("broker_port", "9092"))
+        if provider == "kafka" and broker_host:
+            result = await probe_tcp(broker_host, broker_port, "Kafka broker")
+            result.details["topic"] = topic
+            result.details["provider"] = "kafka"
+            return result
+
+        # 6. RabbitMQ: TCP connect if host is given but no management URL
+        rabbit_host = meta.get("host", "")
+        if provider == "rabbitmq" and rabbit_host:
+            rabbit_port = int(meta.get("port", "5672"))
+            result = await probe_tcp(rabbit_host, rabbit_port, "RabbitMQ broker")
+            result.details["topic"] = topic
+            result.details["provider"] = "rabbitmq"
+            return result
+
+        # 7. Descriptive metadata only
         if topic or provider:
             return VerificationResult(
                 status="metadata_only",
-                reason=f"Queue metadata recorded (provider={provider or 'unspecified'}, topic={topic or 'unspecified'}). No live probe performed.",
+                reason=f"Queue metadata recorded (provider={provider or 'unspecified'}, topic={topic or 'unspecified'}). "
+                       f"Provide broker_host (Kafka/RabbitMQ), GCP project_id (Pub/Sub), or management_url for live verification.",
                 details={"topic": topic, "provider": provider},
             )
 
-        # 6. Nothing
+        # 8. Nothing
         return VerificationResult(
             status="skipped",
             reason="No reachability_url or queue metadata provided",
