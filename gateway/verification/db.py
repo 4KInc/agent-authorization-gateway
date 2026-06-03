@@ -49,7 +49,7 @@ class DatabaseVerifier(ResourceVerifier):
         instance = meta.get("instance", "")
         if provider == "cloudsql" and project_id and instance:
             api_url = f"https://sqladmin.googleapis.com/v1/projects/{project_id}/instances/{instance}"
-            result = await probe_gcp_api(api_url, "Cloud SQL instance", accept_statuses={200, 403})
+            result = await probe_gcp_api(api_url, "Cloud SQL instance")
             result.details["provider"] = "cloudsql"
             result.details["project_id"] = project_id
             result.details["instance"] = instance

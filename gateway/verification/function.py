@@ -60,7 +60,7 @@ class FunctionVerifier(ResourceVerifier):
                 f"https://cloudfunctions.googleapis.com/v2/"
                 f"projects/{project_id}/locations/{region}/functions/{function_name}"
             )
-            result = await probe_gcp_api(api_url, "Cloud Function", accept_statuses={200, 403})
+            result = await probe_gcp_api(api_url, "Cloud Function")
             result.details["function_name"] = function_name
             result.details["provider"] = "cloud_functions"
             result.details["region"] = region
@@ -72,7 +72,7 @@ class FunctionVerifier(ResourceVerifier):
                 f"https://run.googleapis.com/v2/"
                 f"projects/{project_id}/locations/{region}/jobs/{function_name}"
             )
-            result = await probe_gcp_api(api_url, "Cloud Run Job", accept_statuses={200, 403})
+            result = await probe_gcp_api(api_url, "Cloud Run Job")
             result.details["function_name"] = function_name
             result.details["provider"] = "cloud_run_jobs"
             result.details["region"] = region
