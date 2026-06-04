@@ -1531,6 +1531,84 @@ async def get_anchors():
     }
 
 
+@api_app.post("/anchors/trigger")
+async def trigger_anchor():
+    """On-demand Merkle anchoring to Base L2.
+
+    Computes a unified Merkle root over all artifacts since the last
+    anchor and submits it to Base L2. Use this during demos to anchor
+    immediately instead of waiting for the scheduled threshold.
+
+    Returns the anchor result with tx hash and BaseScan URL.
+    """
+    import asyncio
+    from .artifact_log import ArtifactLog
+    from .merkle import compute_unified_root
+
+    gateway = _get_gateway()
+    store = _get_store()
+
+    firestore_db = None
+    if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+        try:
+            from google.cloud import firestore
+            firestore_db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        except Exception:
+            pass
+
+    art_log = ArtifactLog(tenant=gateway.tenant, firestore_client=firestore_db)
+
+    # Find last anchor seq
+    last_anchor_seq = 0
+    try:
+        anchor_records = await store.list_anchor_records(gateway.tenant)
+        if anchor_records:
+            last_range = anchor_records[0].get("artifact_seq_range")
+            if last_range:
+                last_anchor_seq = last_range[1]
+    except Exception:
+        pass
+
+    current_seq = art_log.head_seq
+    if current_seq <= last_anchor_seq:
+        return {"status": "skipped", "reason": "No new artifacts since last anchor",
+                "last_anchor_seq": last_anchor_seq, "current_seq": current_seq}
+
+    hashes = art_log.get_all_hashes_since(last_anchor_seq)
+    if not hashes:
+        return {"status": "skipped", "reason": "No artifact hashes found"}
+
+    hex_hashes = [h.removeprefix("sha256:") for h in hashes]
+    unified_root = compute_unified_root(hex_hashes)
+
+    try:
+        from .base_anchor import anchor_root
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, anchor_root, unified_root, current_seq)
+
+        from datetime import datetime, timezone
+        record = {
+            **result.to_dict(),
+            "anchor_type": "unified",
+            "artifact_count": len(hashes),
+            "artifact_seq_range": [last_anchor_seq + 1, current_seq],
+            "anchored_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await store.save_anchor_record(gateway.tenant, record)
+
+        return {
+            "status": "anchored",
+            "tx_hash": result.tx_hash,
+            "block_number": result.block_number,
+            "basescan_url": f"https://basescan.org/tx/{result.tx_hash}",
+            "merkle_root": unified_root,
+            "artifact_count": len(hashes),
+            "artifact_seq_range": [last_anchor_seq + 1, current_seq],
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Base L2 anchor failed: {e}")
+
+
 @api_app.get("/anchors/verify/{tx_hash}")
 async def verify_anchor(tx_hash: str):
     """Independently verify an on-chain anchor by fetching the tx from Base.
