@@ -26,9 +26,11 @@ from .merkle import compute_unified_root
 
 logger = logging.getLogger("gateway.anchor_scheduler")
 
-ANCHOR_ARTIFACT_THRESHOLD = 10
-ANCHOR_TIME_THRESHOLD_SECONDS = 3600  # 1 hour
-POLL_INTERVAL_SECONDS = 300  # check every 5 minutes
+import os as _os
+
+ANCHOR_ARTIFACT_THRESHOLD = int(_os.environ.get("ANCHOR_ARTIFACT_THRESHOLD", "10"))
+ANCHOR_TIME_THRESHOLD_SECONDS = int(_os.environ.get("ANCHOR_TIME_THRESHOLD", "3600"))
+POLL_INTERVAL_SECONDS = int(_os.environ.get("ANCHOR_POLL_INTERVAL", "300"))
 
 
 async def anchor_loop(gateway, store):
