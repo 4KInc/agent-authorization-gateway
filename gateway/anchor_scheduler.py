@@ -51,7 +51,18 @@ async def anchor_loop(gateway, store):
         pass
 
     art_log = ArtifactLog(tenant=gateway.tenant, firestore_client=firestore_db)
-    last_anchor_seq = art_log.head_seq  # Don't re-anchor old artifacts on restart
+
+    # Resume from the last anchored seq. If no anchor records exist,
+    # start from 0 so all existing artifacts get anchored.
+    try:
+        anchor_records = await store.list_anchor_records(gateway.tenant)
+        if anchor_records:
+            last_range = anchor_records[0].get("artifact_seq_range")
+            last_anchor_seq = last_range[1] if last_range else art_log.head_seq
+        else:
+            last_anchor_seq = 0  # No prior anchors — anchor everything
+    except Exception:
+        last_anchor_seq = 0
 
     logger.info(
         "Unified anchor scheduler started (threshold=%d artifacts or %ds, "
