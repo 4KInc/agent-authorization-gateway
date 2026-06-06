@@ -83,6 +83,10 @@ See [docs/architecture.svg](../architecture.svg) for the full system diagram sho
 | POST | `/verify-receipt` | Verify a receipt's signature and chain linkage (supports partial chains) |
 | GET | `/anchors` | List Merkle anchor records |
 | GET | `/anchors/verify/{tx_hash}` | Verify a specific on-chain anchor |
+| GET | `/agents/liveness` | Continuous attestation summary for all agents |
+| POST | `/agents/liveness/sweep` | Trigger immediate re-challenge of all stale agents |
+| POST | `/agents/{id}/liveness/check` | Trigger immediate re-challenge of a specific agent |
+| POST | `/evidence/flush` | Force-drain evidence buffer (async hot-path mode) |
 | GET | `/health` | Liveness probe |
 
 ### 2. Policy Auditor (AI)
@@ -178,7 +182,7 @@ See [docs/architecture.svg](../architecture.svg) for the full system diagram sho
 | Secret Manager secrets | `gateway-isolator-signing-key`, `gateway-isolator-config` |
 | Persistence | `tenants/{id}/containment_actions/` |
 | Triggers | Pub/Sub push from Investigator (HIGH/CRITICAL incidents), HTTP POST |
-| Cloud Run service | `agent-auth-gateway-isolator` |
+| Cloud Run service | `agent-auth-isolator` |
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -202,15 +206,19 @@ A2A is consolidated into each AI agent's REST service rather than a separate tra
 
 ### MCP Tools
 
-The MCP server exposes 22 tools organized by namespace prefix. Backward-compatible aliases (without prefix) are also registered for tools that existed before namespacing was introduced.
+The MCP server exposes 30 tools organized by namespace prefix. Backward-compatible aliases (without prefix) are also registered for tools that existed before namespacing was introduced.
 
 | Namespace | Tool count | Example tools |
 |---|---|---|
-| `gateway_*` | 8 | `gateway_authorize`, `gateway_register`, `gateway_verify_receipt`, `gateway_get_chain`, `gateway_list_anchors` |
-| `auditor_*` | 4 | `auditor_audit_tick`, `auditor_get_reports`, `auditor_get_report`, `auditor_get_keys` |
-| `recommender_*` | 4 | `recommender_recommend_tick`, `recommender_get_proposals`, `recommender_get_proposal`, `recommender_get_keys` |
-| `investigator_*` | 3 | `investigator_investigate`, `investigator_get_incidents`, `investigator_get_keys` |
-| `coordinator_*` | 3 | `coordinator_discover`, `coordinator_directory`, `coordinator_route_question` |
+| `gateway_*` | 5 | `gateway_authorize_action`, `gateway_verify_receipt`, `gateway_get_chain_stats`, `gateway_get_receipt_chain`, `gateway_get_public_key` |
+| `auditor_*` | 3 | `auditor_query_audits`, `auditor_audit_receipt`, `auditor_explain_verdict` |
+| `recommender_*` | 3 | `recommender_query_proposals`, `recommender_explain_proposal`, `recommender_analyze_patterns` |
+| `investigator_*` | 3 | `investigator_query_incidents`, `investigator_investigate_conflict`, `investigator_explain_incident` |
+| `coordinator_*` | 3 | `coordinator_route_capability`, `coordinator_list_known_agents`, `coordinator_register_known_agent` |
+| `actions_*` | 3 | `actions_query_actions`, `actions_get_action`, `actions_register_action` |
+| `resources_*` | 3 | `resources_query_resources`, `resources_get_resource`, `resources_register_resource` |
+| `agents_*` | 2 | `agents_query_agents`, `agents_get_agent` |
+| Backward-compat aliases | 5 | `authorize_action`, `verify_receipt`, `get_chain_stats`, `get_receipt_chain`, `get_public_key` |
 
 ## Data Flow
 
@@ -326,6 +334,7 @@ All persistent state is in Cloud Firestore under a per-tenant namespace:
 | `tenants/{id}/metadata/stats` | `{total_requests, approvals, denials, ...}` | Gateway |
 | `tenants/{id}/anchors/{tx_prefix}` | `{merkle_root, tx_hash, block_number, receipt_range}` | Gateway |
 | `tenants/{id}/isolation_records/{isolation_id}` | `{body: {isolation_id, tenant, agent_id, severity, trigger, reason, actions_taken[], isolated_at, isolator_kid}, signature}` | Isolator |
+| `tenants/{id}/agent_liveness/{agent_id}` | `{agent_id, state, consecutive_failures, total_checks, total_successes, total_failures, liveness_verified_at, last_check_at, last_failure_reason, live_challenge_url, history[]}` | Gateway |
 | `discovery_coordinator/agents/entries/{url_hash}` | `{agent_card_url, agent_card, trust_level, health_status, ai_assessed_capabilities}` | Coordinator |
 
 ## Cryptographic Substrate
@@ -339,20 +348,21 @@ All persistent state is in Cloud Firestore under a per-tenant namespace:
 
 ## Cloud Run Services
 
-Ten services are deployed. Each AI agent service also serves its A2A agent card at `/.well-known/agent-card.json`.
+Eleven application services are deployed. Each AI agent service also serves its A2A agent card at `/.well-known/agent-card.json`.
 
 | Service name | Agent | Role |
 |---|---|---|
 | `agent-auth-gateway` | Gateway | REST authorization API, token issuance, receipt chain |
-| `agent-auth-gateway-mcp` | Gateway | MCP server (22 tools, 5 namespaces) |
+| `agent-auth-gateway-mcp` | Gateway | MCP server (30 tools, 8 namespaces + aliases) |
 | `agent-auth-gateway-adk` | Gateway | ADK conversational chat interface (read-only) |
 | `agent-auth-gateway-a2a` | Gateway | A2A protocol entrypoint |
 | `agent-auth-gateway-auditor` | Policy Auditor | Compliance RAG auditing, Pub/Sub CONFLICT publisher |
 | `agent-auth-gateway-recommender` | Policy Recommender | Pattern-driven policy proposal generation |
 | `agent-auth-investigator` | Incident Investigator | Evidence-synthesis, incident reports |
 | `agent-auth-gateway-coordinator` | Discovery Coordinator | A2A agent directory, capability routing |
-| `agent-auth-gateway-isolator` | Isolator | Automated containment on HIGH/CRITICAL incidents |
+| `agent-auth-isolator` | Isolator | Automated containment on HIGH/CRITICAL incidents |
 | `agent-auth-gateway-resource` | — | Protected resource demo (token verification) |
+| `agent-auth-demo-ui` | — | Interactive admin dashboard (Next.js) |
 
 ## External Dependencies
 
@@ -360,7 +370,7 @@ All infrastructure is Google Cloud. No third-party SaaS sits on any trust path.
 
 | Service | Purpose |
 |---|---|
-| Cloud Run | Hosts all 10 Cloud Run services (scale-to-zero, managed TLS) |
+| Cloud Run | Hosts all 11 Cloud Run services (scale-to-zero, managed TLS) |
 | Cloud Firestore | Receipt, audit, proposal, and incident persistence |
 | Vertex AI Search | RAG retrieval over OWASP/NIST compliance PDFs |
 | Vertex AI Model Garden (Gemini 2.5 Pro) | Reasoning for Auditor, Recommender, Investigator, Coordinator |
@@ -370,6 +380,62 @@ All infrastructure is Google Cloud. No third-party SaaS sits on any trust path.
 | Cloud Build + Artifact Registry | Container image builds and storage |
 | IAM | Service-to-service access control |
 | Base L2 Mainnet | On-chain Merkle root anchoring (optional, async) |
+
+## Why Cloud Run, Not Agent Engine
+
+Gate deploys on Cloud Run rather than Google's Agent Engine (Agent Runtime). This is a deliberate architectural decision, not a gap.
+
+**The Gateway must be deterministic.** Agent Engine is designed for LLM-powered agents that reason through multi-step tasks. Gate's Gateway is the opposite: it evaluates a deterministic policy (allowlists, resource scoping, rate limits), signs a receipt, and issues a token. No LLM is invoked. No reasoning occurs. The authorization decision is a pure function of the policy and the request. Running this inside a managed agent runtime adds latency, reduces observability, and introduces a dependency on a runtime whose availability characteristics Gate does not control. The 3.2ms hot-path latency that makes Gate viable for high-frequency enterprise workloads depends on the Gateway controlling its own process lifecycle.
+
+**Per-service IAM requires per-service deployments.** Gate's inter-service trust model (documented below) relies on each agent running as its own service account with explicit `roles/run.invoker` grants. Agent Engine manages agent lifecycle internally; customers cannot assign distinct service accounts to individual agents within a shared runtime. The compromise containment properties that a security reviewer evaluates (a compromised Auditor cannot forge receipts because it lacks the Gateway's signing key and IAM grants) depend on this separation.
+
+**The AI agents use ADK, Gemini, and Vertex AI.** The five AI agents (Auditor, Recommender, Investigator, Coordinator, Isolator) are built with Google ADK's `LlmAgent` and `FunctionTool`, use Gemini 2.5 Pro via Vertex AI Model Garden (`GOOGLE_GENAI_USE_VERTEXAI=TRUE`), and use Vertex AI Search for RAG. All Google AI Platform components are used; the runtime is Cloud Run rather than Agent Engine because the security architecture requires it.
+
+**Cloud Run is explicitly listed as acceptable.** The Track 3 requirements state: "Use Cloud Run for rapidly scaling, stateless, containerized microservices." Gate's six agents are exactly that: stateless Cloud Run services backed by Firestore for persistence and Secret Manager for keys.
+
+## Inter-Service Trust Model
+
+Several inter-service calls cross security boundaries within Gate's deployment. The Isolator calls the Gateway to delete an agent's registration when it issues a quarantine. The Investigator reads receipts and audit reports via the Gateway's Firestore collections. The Coordinator queries the agent directory. Each call has an explicit trust model.
+
+### Cloud Run IAM as the cryptographic boundary
+
+Gate's inter-service trust is enforced by Cloud Run IAM, not by application-layer signing. This is a deliberate architectural choice. Every inter-service call carries a Google-issued OIDC token signed by Google's root CA, with the caller's service account identity bound to the token. Cloud Run validates this token before delivering the request to the target service. A service account without `roles/run.invoker` on the target service cannot reach the target's request handler at all; the request is rejected by Cloud Run's frontend before any application code runs.
+
+Each Gate service attaches its identity token on outbound HTTP calls. For example, the Isolator's quarantine flow:
+
+```python
+# From gateway/isolator/isolator_service.py
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport.requests import GRequest
+token = google_id_token.fetch_id_token(GRequest(), audience)
+headers["Authorization"] = f"Bearer {token}"
+# Cloud Run validates this token before the Gateway's handler runs
+```
+
+The same pattern is used by the Investigator, Auditor, and Coordinator for their outbound calls.
+
+### Per-service service accounts
+
+Each Gate service should run as its own service account in production:
+
+| Service | Service Account | Outbound Calls |
+|---|---|---|
+| `agent-auth-gateway` | `gateway-sa@<project>.iam` | None (receives calls only) |
+| `agent-auth-gateway-auditor` | `auditor-sa@<project>.iam` | Gateway (read receipts), Pub/Sub (publish CONFLICTs) |
+| `agent-auth-gateway-recommender` | `recommender-sa@<project>.iam` | Gateway (read audit reports) |
+| `agent-auth-investigator` | `investigator-sa@<project>.iam` | Gateway (read receipts, registrations), Isolator (trigger containment) |
+| `agent-auth-gateway-coordinator` | `coordinator-sa@<project>.iam` | External agent URLs (A2A card discovery) |
+| `agent-auth-isolator` | `isolator-sa@<project>.iam` | Gateway (`DELETE /agents/{id}` for quarantine) |
+
+### Compromise containment
+
+A compromised Isolator can issue DELETEs on agents (its legitimate function), but cannot call `/authorize` (no invoker grant), cannot read other tenants' receipts (tenant-scoped Firestore queries), and cannot mint Gateway-signed tokens (the signing key is in Secret Manager, accessible only to the Gateway's service account). The blast radius of a compromised non-Gateway service is bounded by the IAM grants explicitly given to that service.
+
+A compromised Gateway is the catastrophic scenario. The Gateway holds the receipt signing key and the IAM grant to write to the receipt store. This is why the Gateway is deliberately the simplest of the six services: deterministic policy evaluation, no LLM, no large dependency surface, minimal code to audit. The five AI agents have richer attack surfaces (Gemini API, RAG queries, multi-step reasoning) and correspondingly more limited IAM grants.
+
+### Verifiability
+
+The trust model is auditable. The IAM policy on every Cloud Run service is queryable via `gcloud run services get-iam-policy`. Cloud Audit Logs record every inter-service call with the caller's identity. A security review can enumerate every grant in minutes.
 
 ## Failure Modes and Safeguards
 

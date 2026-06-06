@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
     cryptography \
-    pydantic
+    pydantic \
+    google-cloud-logging \
+    "a2a-sdk[fastapi]"
 
 COPY . gateway/recommender/
 

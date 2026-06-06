@@ -37,19 +37,17 @@ class EvidenceCollector:
         return doc.to_dict() if doc.exists else None
 
     def get_agent_registration(self, tenant: str, agent_id: str) -> Optional[Dict]:
+        # Query per-agent document at tenants/{tenant}/agent_registry/{agent_id}
+        # (populated by Gateway's AgentRegistry._persist on every registration)
         doc = self.db.collection("tenants").document(tenant) \
-            .collection("metadata").document("agent_registry").get()
+            .collection("agent_registry").document(agent_id).get()
         if not doc.exists:
             return {"agent_id": agent_id, "registered": False, "evidence_id": f"agent_registry/{agent_id}"}
-        registry = doc.to_dict()
-        agents = registry.get("agents", {})
-        if agent_id not in agents:
-            return {"agent_id": agent_id, "registered": False, "evidence_id": f"agent_registry/{agent_id}"}
-        data = agents[agent_id]
+        data = doc.to_dict()
         return {
             "agent_id": agent_id,
             "registered": True,
-            "status": "registered",
+            "status": data.get("status", "active"),
             "registered_at": data.get("registered_at"),
             "registered_via": data.get("registered_via", "self"),
             "public_key_fingerprint": data.get("kid", "")[:24],

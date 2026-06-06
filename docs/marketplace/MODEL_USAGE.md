@@ -16,6 +16,7 @@ All model calls are routed through Vertex AI's Model Garden (`us-central1-aiplat
 | Investigator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | Reactive, event-driven | Evidence synthesis and incident report assembly |
 | Coordinator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | On-demand, per-request | Agent capability assessment and question routing |
 | Isolator | Gemini 2.5 Pro | Google | Vertex AI Model Garden | Reactive, event-driven | Incident severity analysis and containment recommendation |
+| Gateway (explain) | Gemini 2.5 Flash | Google | Vertex AI Model Garden | On-demand, per-request | Natural language policy explanation and receipt narration |
 
 ### Model Garden Routing
 

@@ -88,11 +88,18 @@ def validate_agent_id(agent_id: str) -> None:
 
 
 class AgentRegistry:
-    """In-memory registry of agent identities with replace semantics."""
+    """Agent identity registry backed by in-memory cache + optional Firestore.
 
-    def __init__(self, **kwargs):
+    In-memory dict is the hot path for DPoP verification. Firestore is the
+    durable store that survives Cloud Run cold starts. Writes go to both;
+    reads come from memory (populated from Firestore on startup via load_all).
+    """
+
+    def __init__(self, tenant: str = "default", firestore_db=None, **kwargs):
         self._agents: dict[str, RegisteredAgent] = {}
         self._by_kid: dict[str, RegisteredAgent] = {}
+        self._db = firestore_db
+        self._tenant = tenant
 
     def register(self, agent_id: str, public_key_jwk: dict, live_challenge_url: str | None = None, **kwargs) -> RegisteredAgent:
         """Register an agent's public key with replace semantics."""
@@ -107,6 +114,7 @@ class AgentRegistry:
         self._agents[agent_id] = agent
         self._by_kid[kid] = agent
         logger.info("Registered agent: %s kid=%s", agent_id, kid)
+        self._persist(agent, public_key_jwk)
         return agent
 
     def revoke(self, agent_id: str, **kwargs) -> None:
@@ -114,6 +122,7 @@ class AgentRegistry:
         if agent is None:
             raise ValueError(f"Agent '{agent_id}' is not registered")
         self._by_kid.pop(agent.kid, None)
+        self._delete_persisted(agent_id)
 
     def get(self, agent_id: str) -> RegisteredAgent | None:
         return self._agents.get(agent_id)
@@ -131,6 +140,93 @@ class AgentRegistry:
             }
             for a in self._agents.values()
         ]
+
+    # -- Firestore persistence -------------------------------------------------
+
+    def _persist(self, agent: RegisteredAgent, public_key_jwk: dict | None = None) -> bool:
+        """Persist a single agent record to Firestore. No-op without Firestore."""
+        if self._db is None:
+            return False
+        try:
+            jwk = public_key_jwk
+            if jwk is None:
+                pub_bytes = agent.public_key.public_bytes_raw()
+                jwk = {
+                    "kty": "OKP", "crv": "Ed25519",
+                    "x": base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode(),
+                }
+            doc_ref = (
+                self._db.collection("tenants").document(self._tenant)
+                .collection("agent_registry").document(agent.agent_id)
+            )
+            doc_ref.set({
+                "agent_id": agent.agent_id,
+                "kid": agent.kid,
+                "public_key_jwk": jwk,
+                "registered_at": agent.registered_at,
+                "live_challenge_url": agent.live_challenge_url,
+                "status": "active",
+            })
+            return True
+        except Exception as e:
+            logger.warning("Failed to persist agent %s to Firestore: %s", agent.agent_id, e)
+            return False
+
+    def _delete_persisted(self, agent_id: str) -> bool:
+        """Remove an agent from Firestore. No-op without Firestore."""
+        if self._db is None:
+            return False
+        try:
+            (
+                self._db.collection("tenants").document(self._tenant)
+                .collection("agent_registry").document(agent_id)
+                .delete()
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to delete agent %s from Firestore: %s", agent_id, e)
+            return False
+
+    def load_all(self) -> int:
+        """Hydrate in-memory registry from Firestore on startup.
+
+        Returns the number of agents loaded.
+        """
+        if self._db is None:
+            return 0
+        collection = (
+            self._db.collection("tenants").document(self._tenant)
+            .collection("agent_registry")
+        )
+        loaded = 0
+        try:
+            for doc in collection.stream():
+                data = doc.to_dict()
+                agent_id = data.get("agent_id") or doc.id
+                jwk = data.get("public_key_jwk")
+                if not jwk or not jwk.get("x"):
+                    logger.warning("Skipping agent %s: missing public_key_jwk", agent_id)
+                    continue
+                try:
+                    pub_key, _, kid = _parse_jwk(jwk)
+                except ValueError as e:
+                    logger.warning("Skipping agent %s: invalid JWK: %s", agent_id, e)
+                    continue
+                agent = RegisteredAgent(
+                    agent_id=agent_id,
+                    public_key=pub_key,
+                    kid=data.get("kid", kid),
+                    registered_at=data.get("registered_at", 0),
+                    live_challenge_url=data.get("live_challenge_url"),
+                )
+                self._agents[agent_id] = agent
+                self._by_kid[agent.kid] = agent
+                loaded += 1
+        except Exception as e:
+            logger.error("Failed to load agent registry from Firestore: %s", e)
+        if loaded:
+            logger.info("Loaded %d agents from Firestore for tenant %s", loaded, self._tenant)
+        return loaded
 
 
 # ============================================================================

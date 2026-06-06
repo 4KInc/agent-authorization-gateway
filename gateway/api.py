@@ -35,10 +35,20 @@ from .store import ReceiptStore, create_store
 from .verify import verify_chain, verify_receipt
 
 logger = logging.getLogger("gateway.api")
-logging.basicConfig(
-    level=logging.INFO,
-    format='{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}',
-)
+
+# Use Google Cloud Logging when running on GCP (structured JSON logs in Cloud Logging console)
+try:
+    if os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        import google.cloud.logging as cloud_logging
+        cloud_logging.Client().setup_logging(log_level=logging.INFO)
+        logger.info("Google Cloud Logging initialized")
+    else:
+        raise ImportError("local mode")
+except (ImportError, Exception):
+    logging.basicConfig(
+        level=logging.INFO,
+        format='{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}',
+    )
 
 # Module-level state
 _gateway: GatewayService | None = None
@@ -800,6 +810,117 @@ async def update_policy(req: UpdatePolicyRequest):
         "status": "updated",
         "policy_hash": policy.policy_hash(),
         "rule_count": len(rules),
+    }
+
+
+# --- Gemini-powered explanations (Google AI integration) ---
+
+@api_app.get("/policy/explain")
+async def explain_policy():
+    """Use Gemini to explain the current security policy in plain English.
+
+    Demonstrates Google AI integration: the deterministic policy is
+    interpreted by Gemini 2.5 Pro via Vertex AI Model Garden to produce
+    a human-readable summary for compliance officers and auditors.
+    """
+    gateway = _get_gateway()
+    policy_data = {
+        "version": gateway.policy.version,
+        "policy_hash": gateway.policy.policy_hash(),
+        "rules": [
+            {"id": r.id, "type": r.type, "config": r.config}
+            for r in gateway.policy.rules
+        ],
+    }
+
+    try:
+        from google import genai
+        client = genai.Client(vertexai=True, project=os.environ.get("GOOGLE_CLOUD_PROJECT"), location="us-central1")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"""You are Gate's policy explainer. Summarize this security policy in plain English
+for a Chief Compliance Officer. Be specific about what agents can and cannot do.
+
+Policy JSON:
+{json.dumps(policy_data, indent=2)}
+
+Format: 3-5 bullet points, each one sentence. No jargon. Start each bullet with what it means for the business.""",
+        )
+        explanation = response.text
+    except Exception as e:
+        logger.warning(f"Gemini policy explanation failed: {e}")
+        explanation = "Gemini explanation unavailable. The policy has {} rules covering action allowlists, resource scoping, and rate limits.".format(
+            len(gateway.policy.rules)
+        )
+
+    return {
+        "tenant": gateway.tenant,
+        "policy_hash": gateway.policy.policy_hash(),
+        "rule_count": len(gateway.policy.rules),
+        "explanation": explanation,
+        "model": "gemini-2.5-flash",
+        "source": "vertex-ai-model-garden",
+    }
+
+
+@api_app.get("/chain/{seq}/explain")
+async def explain_receipt(seq: int):
+    """Use Gemini to explain a specific authorization decision in plain English.
+
+    Given a receipt sequence number, Gemini reads the receipt and its
+    audit report (if available) and produces a human-readable explanation
+    of what happened and why.
+    """
+    gateway = _get_gateway()
+    store = _get_store()
+
+    stored_chain = await store.get_chain(gateway.tenant)
+    receipt = None
+    for r in (stored_chain or []):
+        if int(r.get("body", {}).get("seq", 0)) == seq:
+            receipt = r
+            break
+
+    if not receipt:
+        raise HTTPException(404, f"Receipt seq={seq} not found")
+
+    body = receipt.get("body", {})
+    meta = receipt.get("_meta", {})
+
+    try:
+        from google import genai
+        client = genai.Client(vertexai=True, project=os.environ.get("GOOGLE_CLOUD_PROJECT"), location="us-central1")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"""You are Gate's receipt explainer. Explain this authorization decision in plain English
+for a security analyst reviewing an audit trail.
+
+Receipt:
+- Sequence: {body.get('seq')}
+- Decision: {body.get('decision')}
+- Reasons: {body.get('reasons', [])}
+- Agent: {meta.get('agent_id', 'unknown')}
+- Action: {meta.get('action', 'unknown')}
+- Resource: {meta.get('resource', 'unknown')}
+- Timestamp: {body.get('ts')}
+- Policy version: {body.get('policy_version', '')[:24]}...
+
+In 2-3 sentences: What did the agent try to do? Was it allowed or denied? Why?""",
+        )
+        explanation = response.text
+    except Exception as e:
+        logger.warning(f"Gemini receipt explanation failed: {e}")
+        explanation = f"Agent '{meta.get('agent_id')}' attempted '{meta.get('action')}' on '{meta.get('resource')}'. Decision: {body.get('decision')}. Reasons: {', '.join(body.get('reasons', []) or ['policy approved'])}."
+
+    return {
+        "seq": seq,
+        "decision": body.get("decision"),
+        "agent_id": meta.get("agent_id"),
+        "action": meta.get("action"),
+        "resource": meta.get("resource"),
+        "explanation": explanation,
+        "model": "gemini-2.5-flash",
+        "source": "vertex-ai-model-garden",
     }
 
 

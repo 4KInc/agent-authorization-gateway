@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-The Agent Authorization Gateway exposes a unified MCP server with 17 unique tools (plus 5 backward-compatibility aliases, 22 total) spanning all five agents in the system. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning. Agent registration is not available via MCP — it requires proof of possession, enforced only via the REST API.
+The Agent Authorization Gateway exposes a unified MCP server with 25 unique tools (plus 5 backward-compatibility aliases, 30 total) spanning all six agents and three registries. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning. Agent registration is not available via MCP — it requires proof of possession, enforced only via the REST API.
 
 **Endpoint**: `https://agent-auth-gateway-mcp-1031148889398.us-central1.run.app/mcp`
 **Auth**: Bearer token (`Authorization: Bearer <MCP_AUTH_TOKEN>`)
@@ -188,6 +188,94 @@ Register a new agent by its A2A agent card URL. The Coordinator fetches the card
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `agent_card_url` | string | yes | URL of the agent's A2A agent card |
+
+---
+
+## Actions Registry Tools (3)
+
+Query and register actions in the tenant-scoped action registry.
+
+### `actions_query_actions`
+
+List registered actions, optionally filtered by resource type.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource_type` | string | no | Filter by resource type (e.g., "db", "api") |
+| `include_revoked` | boolean | no | Include revoked actions (default: false) |
+
+### `actions_get_action`
+
+Retrieve a specific action by ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action_id` | string | yes | The action identifier |
+
+### `actions_register_action`
+
+Register a new action with risk level and resource type scope.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action_id` | string | yes | Unique action identifier |
+| `display_name` | string | yes | Human-readable name |
+| `resource_type` | string | yes | Resource type this action applies to (db, api, storage, queue, function) |
+| `risk_level` | string | yes | Risk classification (low, medium, high, critical) |
+| `description` | string | no | Action description |
+| `requires_human_approval` | boolean | no | Whether human approval is required |
+
+---
+
+## Resources Registry Tools (3)
+
+Query and register resources in the tenant-scoped resource registry.
+
+### `resources_query_resources`
+
+List registered resources with optional filtering.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `include_revoked` | boolean | no | Include revoked resources (default: false) |
+| `limit` | integer | no | Maximum resources to return |
+
+### `resources_get_resource`
+
+Retrieve a specific resource by ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource_id` | string | yes | The resource identifier |
+
+### `resources_register_resource`
+
+Register a new resource with type-specific verification.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource_id` | string | yes | Unique resource identifier |
+| `display_name` | string | yes | Human-readable name |
+| `resource_type` | string | yes | Resource type (db, api, storage, queue, function) |
+| `description` | string | no | Resource description |
+
+---
+
+## Agents Registry Tools (2)
+
+Query registered customer agents.
+
+### `agents_query_agents`
+
+List all registered agents with their key IDs and liveness state. No parameters.
+
+### `agents_get_agent`
+
+Retrieve a specific agent's registration details.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_id` | string | yes | The agent identifier |
 
 ---
 

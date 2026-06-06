@@ -16,7 +16,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(log_level=logging.INFO)
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _state: dict = {}

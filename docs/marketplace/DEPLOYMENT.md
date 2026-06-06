@@ -4,7 +4,7 @@
 
 Gate deploys as a constellation of Cloud Run services in a single GCP project. All services are fully managed — no customer-managed VMs, no Kubernetes cluster operations, no persistent compute. Each service scales to zero when idle and scales up automatically under load.
 
-The deployment comprises 10 Cloud Run services, 1 Pub/Sub topic with 1 push subscription, 2 Cloud Scheduler jobs, 6 Secret Manager secrets (minimum), 1 Firestore database, and 1 Vertex AI Search data store.
+The deployment comprises 11 Cloud Run services, 1 Pub/Sub topic with 1 push subscription, 2 Cloud Scheduler jobs, 6 Secret Manager secrets (minimum), 1 Firestore database, and 1 Vertex AI Search data store.
 
 ## Deployment Topology Decisions
 
@@ -78,7 +78,7 @@ All services deploy to `us-central1` (configurable). Current deployed state:
 | agent-auth-gateway-recommender | Policy Recommender agent | `gateway/recommender/Dockerfile` | 1Gi | `agent-auth-gateway-recommender` |
 | agent-auth-investigator | Incident Investigator agent | `gateway/investigator/Dockerfile` | 1Gi | `agent-auth-investigator` |
 | agent-auth-gateway-coordinator | Discovery Coordinator | `gateway/coordinator/Dockerfile` | 1Gi | `agent-auth-gateway-coordinator` |
-| agent-auth-gateway-isolator | Incident Isolator agent | `gateway/isolator/Dockerfile` | 1Gi | `agent-auth-gateway-isolator` |
+| agent-auth-isolator | Incident Isolator agent | `gateway/isolator/Dockerfile` | 1Gi | `agent-auth-isolator` |
 | agent-auth-demo-ui | Interactive demo dashboard | `independent-agent/` | 512Mi | `agent-auth-demo-ui` |
 
 All services use `--min-instances=0` (scale-to-zero) and `--max-instances=10` by default.
@@ -325,7 +325,111 @@ Each AI agent service requires `roles/aiplatform.user` on its service account fo
 | `ANCHOR_TO_BASE` | Gateway (REST) | Set to `true` to enable Base L2 Merkle anchoring |
 | `MAX_PER_TICK` | Auditor | Max receipts per audit tick (default: 10) |
 | `POLICY_YAML_PATH` | Gateway | Path to a YAML policy file to load at startup (overrides built-in demo policy; see docs/policy.md) |
+| `CONTINUOUS_ATTESTATION` | Gateway | Set to `false` to disable background liveness sweep (default: enabled) |
+| `ATTESTATION_INTERVAL` | Gateway | Seconds between liveness re-challenges (default: 3600) |
+| `HOT_PATH_MODE` | Gateway | `sync` (blocking Firestore, default) or `async` (evidence buffer with 1s flush) |
 | `A2A_BASE_URL` | AI agents (Auditor, Recommender, Investigator, Coordinator, Isolator) | Base URL of the service's own A2A endpoint, used to populate the agent card `url` field |
+
+## Production Lockdown Checklist
+
+The reference deployment uses `--allow-unauthenticated` on all Cloud Run services for evaluator access. This is appropriate for hackathon submission and design partnership demos. Production deployments must lock down the IAM boundary.
+
+### 1. Remove public access from all services
+
+```bash
+PROJECT_ID=<your-project-id>
+REGION=us-central1
+
+for SVC in agent-auth-gateway agent-auth-gateway-auditor \
+  agent-auth-gateway-recommender agent-auth-investigator \
+  agent-auth-gateway-coordinator agent-auth-isolator \
+  agent-auth-gateway-mcp agent-auth-demo-ui agent-auth-adk-chat; do
+  gcloud run services update $SVC \
+    --no-allow-unauthenticated \
+    --region $REGION --project $PROJECT_ID
+done
+```
+
+### 2. Grant inter-service invoker rights
+
+Each service account receives `roles/run.invoker` only on the services it needs to call:
+
+```bash
+# Isolator -> Gateway (quarantine DELETE calls)
+gcloud run services add-iam-policy-binding agent-auth-gateway \
+  --member="serviceAccount:isolator-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+
+# Investigator -> Gateway (read receipts, agent registrations)
+gcloud run services add-iam-policy-binding agent-auth-gateway \
+  --member="serviceAccount:investigator-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+
+# Investigator -> Isolator (trigger containment on HIGH/CRITICAL)
+gcloud run services add-iam-policy-binding agent-auth-isolator \
+  --member="serviceAccount:investigator-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+
+# Cloud Scheduler -> Auditor and Recommender (periodic ticks)
+gcloud run services add-iam-policy-binding agent-auth-gateway-auditor \
+  --member="serviceAccount:scheduler-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+
+gcloud run services add-iam-policy-binding agent-auth-gateway-recommender \
+  --member="serviceAccount:scheduler-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+```
+
+### 3. Restrict dashboard access to admin users
+
+```bash
+# Grant access to specific admin users via IAP or direct IAM
+gcloud run services add-iam-policy-binding agent-auth-demo-ui \
+  --member="user:admin@yourcompany.com" \
+  --role="roles/run.invoker" \
+  --region $REGION --project $PROJECT_ID
+```
+
+For organizations using Identity-Aware Proxy (IAP), configure IAP on the dashboard service instead of direct IAM bindings.
+
+### 4. Enable Data Access audit logs
+
+In the Cloud Console, enable Data Access audit logs for:
+- Cloud Firestore (read/write operations on receipt and registry collections)
+- Secret Manager (key access events)
+- Cloud Run (inter-service invocation records)
+
+These logs provide the evidence trail that a security reviewer or compliance auditor needs to verify that the IAM boundary is operating as documented.
+
+### 5. Apply customer-managed encryption keys (recommended for regulated workloads)
+
+Configure CMEK on Firestore and Secret Manager. Gate's application code is CMEK-transparent; no code changes required. See Google's [CMEK documentation](https://cloud.google.com/kms/docs/cmek) for the specific commands.
+
+### 6. Configure VPC Service Controls (recommended for regulated workloads)
+
+Add Gate's services to a VPC-SC perimeter. Vertex AI Model Garden inference inherits the perimeter automatically when accessed via the Vertex AI endpoint in the same project. Base L2 anchoring (if enabled) requires an egress rule for the Base RPC endpoint.
+
+### 7. Verify the lockdown
+
+```bash
+# Unauthenticated call should fail after lockdown
+curl -s -o /dev/null -w "%{http_code}" \
+  https://agent-auth-gateway-<hash>.run.app/keys
+# Expected: 403
+
+# Authenticated call should succeed
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  https://agent-auth-gateway-<hash>.run.app/keys
+# Expected: 200
+```
+
+After the checklist, every Cloud Run service requires either a user IAM grant (for admin access) or a service account IAM grant (for inter-service calls). Public access is eliminated. A v0.6 release will ship a `deploy-production.sh` script that applies this checklist by default, with `--evaluator-mode` as an explicit opt-out for demo scenarios.
 
 ## Verification
 
@@ -370,7 +474,7 @@ Rough order-of-magnitude at modest scale (1,000–10,000 daily authorization dec
 
 | Service | Estimated Monthly Cost |
 |---|---|
-| Cloud Run (10 services, scale-to-zero) | $50–200 |
+| Cloud Run (11 services, scale-to-zero) | $50–200 |
 | Cloud Firestore | $20–100 |
 | Vertex AI Search (Enterprise tier) | $200–2,000 |
 | Gemini 2.5 Pro (AI agent model calls) | $100–500 |

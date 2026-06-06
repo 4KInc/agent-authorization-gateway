@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir \
     uvicorn \
     cryptography \
     pydantic \
-    google-cloud-pubsub
+    google-cloud-pubsub \
+    google-cloud-logging \
+    "a2a-sdk[fastapi]"
 
 COPY . gateway/auditor/
 

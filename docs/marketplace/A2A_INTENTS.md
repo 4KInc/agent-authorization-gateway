@@ -2,9 +2,9 @@
 
 ## Overview
 
-Gate is A2A-native. The Gateway publishes an A2A agent card and exposes four skills via the Google A2A SDK (v1.1.0). All five agents in the ecosystem now publish A2A agent cards consolidated into their REST service URLs — there are no separate `-a2a` Cloud Run services for the AI agents. The Isolator does not yet publish an A2A agent card.
+Gate is A2A-native. The Gateway publishes an A2A agent card and exposes four skills via the Google A2A SDK (v1.1.0). All six agents publish A2A agent cards consolidated into their REST service URLs — there are no separate `-a2a` Cloud Run services for the AI agents.
 
-This document enumerates every skill and endpoint across all five agents, their input/output schemas, and the authentication requirements for each.
+This document enumerates every skill and endpoint across all six agents, their input/output schemas, and the authentication requirements for each.
 
 ## Agent Cards
 
@@ -15,7 +15,7 @@ This document enumerates every skill and endpoint across all five agents, their 
 | Recommender | `https://agent-auth-gateway-recommender-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
 | Investigator | `https://agent-auth-investigator-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
 | Coordinator | `https://agent-auth-gateway-coordinator-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
-| Isolator | — | REST-only |
+| Isolator | `https://agent-auth-isolator-1031148889398.us-central1.run.app/.well-known/agent-card.json` | Live |
 
 The Gateway's agent card declares version `0.4.0`, supports text input/output modes, and lists four skills.
 
@@ -299,6 +299,18 @@ Required for `authorize_action` only. Every authorization request must include a
 The `action_digest` is the SHA-256 hash of the JCS-canonicalized action intent (see [docs/protocol.md](../protocol.md) for the worked examples).
 
 Freshness window: 30 seconds. JTI replay prevention: in-memory cache per gateway instance.
+
+## Isolator Skills (A2A)
+
+The Isolator exposes three skills via its A2A agent card:
+
+| Skill ID | Description | Via A2A? |
+|---|---|---|
+| `isolate_agent` | Analyze incident and execute containment | Informational only (must use REST `/isolate` for enforcement) |
+| `query_isolation_records` | List isolation records for a tenant | Yes |
+| `explain_isolation` | Retrieve a specific isolation record by ID | Yes |
+
+The `isolate_agent` skill returns an informational response directing the caller to the REST surface. Containment actions (revoking agent registrations) require the severity-gated enforcement flow on the REST `/isolate` endpoint, which cannot be replicated through the A2A transport.
 
 ## Conformance Requirements
 

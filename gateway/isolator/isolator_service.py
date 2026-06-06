@@ -24,7 +24,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Query, Request
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(log_level=logging.INFO)
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _state: dict = {}
@@ -58,10 +62,43 @@ async def lifespan(app: FastAPI):
 
     load_isolator_key()
     logger.info("Isolator service ready. model=%s", _state["model"])
+
+    # Initialize A2A executor with Firestore client
+    try:
+        _a2a_executor._db = _state["db"]
+    except Exception:
+        pass
+
     yield
 
 
 app = FastAPI(title="Isolator Agent", lifespan=lifespan)
+
+# Mount A2A routes (agent card at /.well-known/agent.json)
+try:
+    from a2a.server.request_handlers import DefaultRequestHandlerV2
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes, create_rest_routes
+    from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
+    from .a2a_server import create_agent_card
+    from .a2a_executor import IsolatorA2AExecutor
+
+    _a2a_executor = IsolatorA2AExecutor()
+    _a2a_card = create_agent_card()
+    _a2a_handler = DefaultRequestHandlerV2(
+        agent_executor=_a2a_executor,
+        task_store=InMemoryTaskStore(),
+        agent_card=_a2a_card,
+    )
+    add_a2a_routes_to_fastapi(
+        app,
+        agent_card_routes=create_agent_card_routes(_a2a_card),
+        jsonrpc_routes=create_jsonrpc_routes(_a2a_handler, rpc_url="/a2a"),
+        rest_routes=create_rest_routes(_a2a_handler),
+    )
+    logger.info("A2A routes mounted on Isolator REST service")
+except Exception as e:
+    logger.warning("A2A routes not mounted (non-fatal): %s", e)
 
 
 @app.get("/health")

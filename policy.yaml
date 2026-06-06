@@ -1,0 +1,30 @@
+version: "1"
+rules:
+  - id: allowed_actions
+    type: allowlist
+    config:
+      allowed_actions:
+        - read
+        - query
+        - list
+        - get
+        - search
+        - analyze
+  - id: resource_scope
+    type: resource_scope
+    config:
+      allowed_resources:
+        - staging
+        - dev
+        - sandbox
+        - test
+      denied_resources:
+        - production
+        - prod
+        - master-key
+        - admin
+  - id: rate_limit
+    type: rate_limit
+    config:
+      max_actions: 10
+      window_seconds: 60

@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir \
     uvicorn \
     httpx \
     cryptography \
-    pydantic
+    pydantic \
+    google-cloud-logging \
+    "a2a-sdk[fastapi]"
 
 COPY . gateway/investigator/
 
