@@ -102,7 +102,11 @@ def anchor_root(
     acct, address = load_anchor_wallet()
 
     nonce = w3.eth.get_transaction_count(address)
-    base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    try:
+        base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    except Exception:
+        # Public RPC may throttle get_block; use a safe default (0.1 gwei)
+        base_fee = w3.to_wei(0.1, "gwei")
     max_priority_fee = w3.to_wei(0.01, "gwei")
     max_fee = base_fee * 2 + max_priority_fee
 
@@ -128,13 +132,19 @@ def anchor_root(
     if receipt.status != 1:
         raise RuntimeError(f"Anchor tx {tx_hash.hex()} reverted on Base")
 
-    block = w3.eth.get_block(receipt.blockNumber)
+    try:
+        block = w3.eth.get_block(receipt.blockNumber)
+        block_ts = block.timestamp
+    except Exception:
+        # Public RPC may fail on recent block lookup; use current time
+        import time
+        block_ts = int(time.time())
 
     result = AnchorResult(
         merkle_root="sha256:" + raw,
         tx_hash="0x" + tx_hash.hex() if not tx_hash.hex().startswith("0x") else tx_hash.hex(),
         block_number=receipt.blockNumber,
-        block_timestamp=block.timestamp,
+        block_timestamp=block_ts,
         chain_head_seq=chain_head_seq,
         confirmed=True,
     )
