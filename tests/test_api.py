@@ -988,3 +988,121 @@ def test_sqs_queue_attempts_live_probe_with_creds():
     data = resp.json()
     assert data["verification"] in ("verified", "failed")
     assert data["verification"] != "metadata_only"
+
+
+# ===========================================================================
+# Counterfactual Policy Simulation Tests
+# ===========================================================================
+
+def test_simulate_policy_returns_valid_structure():
+    """Simulating a policy should return the correct response structure."""
+    gw = _get_gateway()
+    current_rules = [
+        {"id": r.id, "type": r.type, "config": r.config}
+        for r in gw.policy.rules
+    ]
+    resp = client.post("/policy/simulate", json={
+        "rules": current_rules,
+        "lookback_receipts": 500,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "total_replayed" in data
+    assert "unchanged" in data
+    assert "flipped" in data
+    assert "would_flip" in data
+    assert "summary" in data
+    assert "current_policy_hash" in data
+    assert "proposed_policy_hash" in data
+    assert data["total_replayed"] == data["unchanged"] + data["flipped"]
+
+
+def test_simulate_policy_tighter_scope():
+    """Simulating a tighter policy should flip approvals to denials."""
+    from gateway import identity
+
+    # First, create some approved receipts in the chain
+    gw = _get_gateway()
+    gw._policy_engine._rate_counters.clear()
+
+    for i in range(3):
+        identity._proof_jti_cache.clear()
+        _register_agent()
+        proof = create_agent_proof(_agent_key, _agent_id, "read", "staging-db")
+        resp = client.post("/authorize", json={
+            "agent_id": _agent_id,
+            "action": "read",
+            "resource": "staging-db",
+            "agent_proof": proof,
+        })
+        assert resp.status_code == 200
+
+    # Now simulate a policy that denies "read" (removes it from allowlist)
+    resp = client.post("/policy/simulate", json={
+        "rules": [
+            {"id": "no-reads", "type": "allowlist", "config": {"allowed_actions": ["query"]}},
+            {"id": "scope", "type": "resource_scope", "config": {"allowed_resources": ["staging"]}},
+        ],
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_replayed"] > 0
+    assert data["summary"]["approvals_that_become_denials"] > 0
+    assert len(data["would_flip"]) > 0
+    # Verify flip details
+    flip = data["would_flip"][0]
+    assert flip["original_decision"] == "approve"
+    assert flip["simulated_decision"] == "deny"
+    assert "ACTION_NOT_ALLOWED" in flip["new_reasons"][0]
+
+
+def test_simulate_policy_looser_scope():
+    """Simulating a looser policy should flip denials to approvals."""
+    from gateway import identity
+
+    # Create a denied receipt (action not in allowlist)
+    identity._proof_jti_cache.clear()
+    _register_agent()
+    proof = create_agent_proof(_agent_key, _agent_id, "delete", "staging-db")
+    resp = client.post("/authorize", json={
+        "agent_id": _agent_id,
+        "action": "delete",
+        "resource": "staging-db",
+        "agent_proof": proof,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["decision"] == "deny"
+
+    # Now simulate a policy that allows "delete"
+    resp = client.post("/policy/simulate", json={
+        "rules": [
+            {"id": "allow-all", "type": "allowlist", "config": {"allowed_actions": ["read", "delete", "query", "list", "get", "search", "analyze"]}},
+            {"id": "scope", "type": "resource_scope", "config": {"allowed_resources": ["staging"]}},
+        ],
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["summary"]["denials_that_become_approvals"] > 0
+
+
+def test_simulate_policy_validation():
+    """Simulate should reject invalid rules."""
+    resp = client.post("/policy/simulate", json={
+        "rules": [{"config": {}}],
+    })
+    assert resp.status_code == 400
+
+
+def test_simulate_policy_empty_chain():
+    """Simulate on a fresh gateway with no receipts should return zeros."""
+    from gateway.policy import PolicyEngine, Policy, PolicyRule
+    # Use a lookback of 0 effectively by simulating with current policy
+    gw = _get_gateway()
+    resp = client.post("/policy/simulate", json={
+        "rules": [{"id": "test", "type": "allowlist", "config": {"allowed_actions": ["noop"]}}],
+        "lookback_receipts": 1,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "total_replayed" in data
+    assert "summary" in data

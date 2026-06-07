@@ -330,8 +330,8 @@ async def lifespan(app: FastAPI):
 
 
 api_app = FastAPI(
-    title="Agent Authorization Gateway",
-    description="Cryptographic policy enforcement for AI agent actions",
+    title="Gate",
+    description="Cryptographic governance for AI agents — policy enforcement, signed receipts, tamper-evident audit",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -813,6 +813,215 @@ async def update_policy(req: UpdatePolicyRequest):
     }
 
 
+# --- Natural Language Policy Generation ---
+
+
+class GeneratePolicyRequest(BaseModel):
+    description: str = Field(..., min_length=5, max_length=2000, description="Natural language policy description")
+
+
+@api_app.post("/policy/generate")
+async def generate_policy(req: GeneratePolicyRequest):
+    """Generate policy rules from a natural language description using Gemini.
+
+    The CCO types English. Gemini writes the policy rules. The output
+    can be fed directly into /policy/simulate to preview the impact
+    before applying.
+    """
+    gateway = _get_gateway()
+    current_rules = [
+        {"id": r.id, "type": r.type, "config": r.config}
+        for r in gateway.policy.rules
+        if r.type != "agent_binding"
+    ]
+
+    prompt = f"""You are Gate's policy generator. Convert the user's natural language description
+into Gate policy rules. Output ONLY a JSON object with no markdown fencing.
+
+Available rule types:
+1. "allowlist" — config: {{"allowed_actions": ["read", "query", ...]}}
+2. "resource_scope" — config: {{"allowed_resources": [...], "denied_resources": [...]}}
+3. "rate_limit" — config: {{"max_actions": <int>, "window_seconds": <int>}}
+
+Current policy for context:
+{json.dumps(current_rules, indent=2)}
+
+Output schema:
+{{
+  "rules": [
+    {{"id": "<short-kebab-id>", "type": "<type>", "config": {{...}}}}
+  ],
+  "explanation": "One sentence explaining what changed vs current policy"
+}}
+
+User request: {req.description}"""
+
+    try:
+        from google import genai
+        client = genai.Client(
+            vertexai=True,
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+            location="us-central1",
+        )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        raw = response.text.strip()
+
+        # Parse JSON from response (handle markdown fencing)
+        import re as _re_gen
+        fenced = _re_gen.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, _re_gen.S)
+        if fenced:
+            parsed = json.loads(fenced.group(1))
+        else:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end > start:
+                parsed = json.loads(raw[start:end + 1])
+            else:
+                raise ValueError("No JSON object in response")
+
+        rules = parsed.get("rules", [])
+        explanation = parsed.get("explanation", "")
+
+        # Filter out agent_binding rules (Gemini may copy them from context)
+        rules = [r for r in rules if r.get("type") != "agent_binding"]
+
+        # Validate rule structure
+        for r in rules:
+            if not r.get("id") or not r.get("type"):
+                raise ValueError(f"Generated rule missing id or type: {r}")
+            if r["type"] not in ("allowlist", "resource_scope", "rate_limit"):
+                raise ValueError(f"Unknown rule type: {r['type']}")
+
+        return {
+            "rules": rules,
+            "explanation": explanation,
+            "model": "gemini-2.5-flash",
+            "source": "vertex-ai-model-garden",
+            "current_policy_hash": gateway.policy.policy_hash(),
+        }
+    except Exception as e:
+        logger.warning(f"Policy generation failed: {e}")
+        raise HTTPException(502, f"Policy generation failed: {e}")
+
+
+# --- Counterfactual Policy Simulation ---
+
+
+class SimulatePolicyRequest(BaseModel):
+    rules: list[dict] = Field(..., description="Proposed policy rules", max_length=MAX_POLICY_RULES)
+    version: str = Field(default="proposed", description="Version label for the proposed policy")
+    require_resource_registration: bool = False
+    lookback_receipts: int = Field(default=500, ge=1, le=5000, description="Max receipts to replay")
+
+    @field_validator("rules")
+    @classmethod
+    def check_rules_size(cls, v):
+        for i, rule in enumerate(v):
+            _validate_dict_size(rule, MAX_RULE_BYTES, f"rules[{i}]")
+        return v
+
+
+@api_app.post("/policy/simulate")
+async def simulate_policy(req: SimulatePolicyRequest):
+    """Counterfactual policy simulation: replay historical receipts against a proposed policy.
+
+    Returns which decisions would change, which agents are affected,
+    and a summary of the net scope impact. Does not modify any state.
+    """
+    from .policy import Policy, PolicyRule, PolicyEngine
+
+    gateway = _get_gateway()
+    store = _get_store()
+
+    # Build the candidate policy engine
+    rules = []
+    for r in req.rules:
+        if not r.get("id") or not r.get("type"):
+            raise HTTPException(400, "Each rule must have 'id' and 'type' fields")
+        rules.append(PolicyRule(id=r["id"], type=r["type"], config=r.get("config", {})))
+
+    candidate = PolicyEngine(Policy(
+        rules=rules, version=req.version,
+        require_resource_registration=req.require_resource_registration,
+    ))
+
+    # Load historical receipts
+    stored_chain = await store.get_chain(gateway.tenant)
+    all_receipts = stored_chain if stored_chain else gateway.get_receipt_chain()
+    receipts = all_receipts[-req.lookback_receipts:]
+
+    # Replay each receipt against the candidate policy
+    flips: list[dict] = []
+    affected_agents: set[str] = set()
+    unaffected_agents: set[str] = set()
+    approve_to_deny = 0
+    deny_to_approve = 0
+
+    for r in receipts:
+        body = r.get("body", {}) if isinstance(r, dict) else {}
+        meta = r.get("_meta", {}) if isinstance(r, dict) else {}
+        original_decision = body.get("decision")
+        agent_id = meta.get("agent_id", "")
+        action = meta.get("action", "")
+        resource = meta.get("resource", "")
+        parameters = meta.get("parameters")
+
+        if not agent_id or not action or not resource:
+            continue
+
+        sim_result = candidate.evaluate(
+            agent_id=agent_id, action=action, resource=resource,
+            parameters=parameters, dry_run=True,
+        )
+
+        if sim_result.decision != original_decision:
+            flips.append({
+                "seq": body.get("seq"),
+                "agent_id": agent_id,
+                "action": action,
+                "resource": resource,
+                "original_decision": original_decision,
+                "simulated_decision": sim_result.decision,
+                "new_reasons": sim_result.reason_codes,
+            })
+            affected_agents.add(agent_id)
+            if original_decision == "approve" and sim_result.decision == "deny":
+                approve_to_deny += 1
+            elif original_decision == "deny" and sim_result.decision == "approve":
+                deny_to_approve += 1
+        else:
+            unaffected_agents.add(agent_id)
+
+    # Remove agents that appear in both sets
+    unaffected_agents -= affected_agents
+
+    total = len(receipts)
+    original_approvals = sum(1 for r in receipts
+                            if (r.get("body", {}) if isinstance(r, dict) else {}).get("decision") == "approve")
+    simulated_approvals = original_approvals - approve_to_deny + deny_to_approve
+
+    return {
+        "total_replayed": total,
+        "unchanged": total - len(flips),
+        "flipped": len(flips),
+        "would_flip": flips[:100],  # cap response size
+        "has_more_flips": len(flips) > 100,
+        "summary": {
+            "approvals_that_become_denials": approve_to_deny,
+            "denials_that_become_approvals": deny_to_approve,
+            "original_approval_rate": f"{(original_approvals / total * 100):.1f}%" if total else "N/A",
+            "simulated_approval_rate": f"{(simulated_approvals / total * 100):.1f}%" if total else "N/A",
+            "affected_agents": sorted(affected_agents),
+            "unaffected_agents": sorted(unaffected_agents),
+        },
+        "current_policy_hash": gateway.policy.policy_hash(),
+        "proposed_policy_hash": candidate.policy.policy_hash(),
+    }
+
+
 # --- Gemini-powered explanations (Google AI integration) ---
 
 @api_app.get("/policy/explain")
@@ -1166,11 +1375,35 @@ async def delete_agent(agent_id: str):
 
 
 @api_app.get("/agents")
-async def list_agents():
+async def list_agents(include_revoked: bool = False):
     """List all registered agents with liveness state."""
     agents = _get_gateway()._registry.list_agents()
     liveness_mgr = _get_liveness()
+
+    # Include revoked agents from Firestore
+    if include_revoked:
+        registry = _get_gateway()._registry
+        if registry._db:
+            active_ids = {a["agent_id"] for a in agents}
+            try:
+                col = registry._db.collection("tenants").document(registry._tenant).collection("agent_registry")
+                for doc in col.stream():
+                    data = doc.to_dict()
+                    if data.get("agent_id") not in active_ids:
+                        agents.append({
+                            "agent_id": data.get("agent_id", doc.id),
+                            "kid": data.get("kid", ""),
+                            "registered_at": data.get("registered_at", 0),
+                            "live_challenge_url": data.get("live_challenge_url"),
+                            "status": data.get("status", "revoked"),
+                            "revoked_at": data.get("revoked_at"),
+                        })
+            except Exception:
+                pass
+
     for agent in agents:
+        if "status" not in agent:
+            agent["status"] = "active"
         record = liveness_mgr.get(agent["agent_id"])
         if record:
             agent["liveness_state"] = record.state.value
@@ -1542,6 +1775,12 @@ async def register_resource(req: ResourceRegisterRequest, request: Request):
             owner=req.owner,
             metadata=persist_metadata or None,
             registered_by=caller or "anonymous",
+        )
+        # Persist verification result as top-level fields on the resource doc
+        registry.update_verification(
+            req.resource_id,
+            verification["status"],
+            verification.get("reason"),
         )
         return {
             "status": "registered",

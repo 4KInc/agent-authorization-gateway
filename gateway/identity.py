@@ -173,18 +173,19 @@ class AgentRegistry:
             return False
 
     def _delete_persisted(self, agent_id: str) -> bool:
-        """Remove an agent from Firestore. No-op without Firestore."""
+        """Soft-delete an agent in Firestore (set status to revoked). No-op without Firestore."""
         if self._db is None:
             return False
         try:
+            from datetime import datetime, timezone
             (
                 self._db.collection("tenants").document(self._tenant)
                 .collection("agent_registry").document(agent_id)
-                .delete()
+                .update({"status": "revoked", "revoked_at": datetime.now(timezone.utc).isoformat()})
             )
             return True
         except Exception as e:
-            logger.warning("Failed to delete agent %s from Firestore: %s", agent_id, e)
+            logger.warning("Failed to revoke agent %s in Firestore: %s", agent_id, e)
             return False
 
     def load_all(self) -> int:
@@ -204,6 +205,8 @@ class AgentRegistry:
                 data = doc.to_dict()
                 agent_id = data.get("agent_id") or doc.id
                 jwk = data.get("public_key_jwk")
+                if data.get("status") == "revoked":
+                    continue
                 if not jwk or not jwk.get("x"):
                     logger.warning("Skipping agent %s: missing public_key_jwk", agent_id)
                     continue

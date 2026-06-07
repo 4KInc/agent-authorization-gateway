@@ -165,6 +165,14 @@ class ResourceRegistry:
         logger.info("Revoked resource: %s by=%s", resource_id, revoked_by)
         return result
 
+    def update_verification(self, resource_id: str, status: str, reason: str | None) -> None:
+        """Persist verification result as top-level fields on the resource doc."""
+        fields = {"verification": status, "verification_reason": reason or ""}
+        if self._db:
+            self._collection().document(resource_id).update(fields)
+        elif hasattr(self, "_memory") and resource_id in self._memory:
+            self._memory[resource_id].update(fields)
+
     def get(self, resource_id: str) -> dict | None:
         if self._db:
             doc = self._collection().document(resource_id).get()
