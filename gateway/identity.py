@@ -172,6 +172,29 @@ class AgentRegistry:
             logger.warning("Failed to persist agent %s to Firestore: %s", agent.agent_id, e)
             return False
 
+    def update_verification(self, agent_id: str, card_verification: str | None, card_reason: str | None,
+                            live_verification: str | None, live_reason: str | None, card_url: str | None) -> None:
+        """Persist verification results on the agent doc."""
+        if self._db is None:
+            return
+        try:
+            fields: dict = {}
+            if card_verification:
+                fields["agent_card_verification"] = card_verification
+            if card_reason:
+                fields["agent_card_verification_reason"] = card_reason
+            if live_verification:
+                fields["live_challenge_verification"] = live_verification
+            if live_reason:
+                fields["live_challenge_verification_reason"] = live_reason
+            if card_url:
+                fields["agent_card_url"] = card_url
+            if fields:
+                (self._db.collection("tenants").document(self._tenant)
+                 .collection("agent_registry").document(agent_id).update(fields))
+        except Exception as e:
+            logger.warning("Failed to update verification for %s: %s", agent_id, e)
+
     def _delete_persisted(self, agent_id: str) -> bool:
         """Soft-delete an agent in Firestore (set status to revoked). No-op without Firestore."""
         if self._db is None:
