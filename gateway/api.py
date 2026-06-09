@@ -2471,9 +2471,8 @@ async def get_receipt_pdf(seq: int):
                 if a.get("merkle_root", "").removeprefix("sha256:") == proof_root.removeprefix("sha256:"):
                     anchor = a
                     break
-        # If no proof match, just use the latest anchor for context
-        if not anchor and anchors:
-            anchor = anchors[0]
+        # Only show an anchor that actually matches this receipt's proof.
+        # Showing an unrelated anchor is misleading (wrong tx hash on PDF).
     except Exception as exc:
         logger.debug(f"Anchor lookup failed for seq={seq}: {exc}")
 

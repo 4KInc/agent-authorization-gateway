@@ -253,7 +253,7 @@ def generate_receipt_pdf(
     elements.append(_kv_table([
         ("Algorithm", _safe(sig.get("alg", "EdDSA"))),
         ("Key ID (kid)", _safe(sig.get("kid"))),
-        ("Signature", _truncate(_safe(sig.get("sig")), 80)),
+        ("Signature", _truncate(_safe(sig.get("value")), 80)),
         ("Receipt Hash", _truncate(_safe(receipt_hash), 80)),
     ]))
     elements.append(Spacer(1, 10))
@@ -340,14 +340,46 @@ def generate_receipt_pdf(
         block_number = _safe(anchor.get("block_number"))
         basescan_url = f"https://basescan.org/tx/{tx_hash}" if tx_hash != "N/A" else "N/A"
 
-        elements.append(_kv_table([
+        # Build anchor table with BaseScan as a clickable hyperlink
+        anchor_pairs = [
             ("Transaction Hash", _truncate(tx_hash, 80)),
             ("Block Number", block_number),
             ("Merkle Root", _truncate(_safe(anchor.get("merkle_root")), 80)),
-            ("Receipt Count", _safe(anchor.get("receipt_count"))),
+            ("Artifact Count", _safe(anchor.get("artifact_count", anchor.get("receipt_count")))),
             ("Anchored At", _safe(anchor.get("timestamp", anchor.get("anchored_at")))),
-            ("BaseScan Link", basescan_url),
-        ]))
+        ]
+        col_widths = [2.0 * inch, 5.5 * inch]
+        data = [
+            [Paragraph(f"<b>{k}</b>", STYLE_BODY), Paragraph(v, STYLE_BODY)]
+            for k, v in anchor_pairs
+        ]
+        # Add BaseScan link as a clickable hyperlink so the full URL is one target
+        if basescan_url != "N/A":
+            data.append([
+                Paragraph("<b>BaseScan Link</b>", STYLE_BODY),
+                Paragraph(
+                    f'<a href="{basescan_url}" color="#1e40af">{basescan_url}</a>',
+                    STYLE_BODY,
+                ),
+            ])
+        else:
+            data.append([
+                Paragraph("<b>BaseScan Link</b>", STYLE_BODY),
+                Paragraph("N/A", STYLE_BODY),
+            ])
+        t = Table(data, colWidths=col_widths)
+        style_commands = [
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ]
+        for i in range(0, len(data), 2):
+            style_commands.append(("BACKGROUND", (0, i), (-1, i), LIGHT_BLUE_BG))
+        t.setStyle(TableStyle(style_commands))
+        elements.append(t)
     else:
         elements.append(InfoBox(
             "No on-chain anchor found for this receipt's batch. "
