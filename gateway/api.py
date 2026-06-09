@@ -2410,6 +2410,90 @@ async def get_audit_packet(
     return response
 
 
+@api_app.get("/chain/{seq}/pdf")
+async def get_receipt_pdf(seq: int):
+    """Download a PDF claim packet for a single receipt.
+
+    The packet includes receipt details, verification status, Merkle
+    inclusion proof, on-chain anchor details, and independent
+    verification instructions.
+    """
+    from fastapi.responses import Response
+    from .receipt_pdf import generate_receipt_pdf
+    from .merkle import compute_inclusion_proof
+
+    gateway = _get_gateway()
+    store = _get_store()
+    art_log = _get_artifact_log()
+
+    # 1. Find the receipt by seq
+    stored_chain = await store.get_chain(gateway.tenant)
+    receipt = None
+    for r in (stored_chain or []):
+        if int(r.get("body", {}).get("seq", 0)) == seq:
+            receipt = r
+            break
+
+    if not receipt:
+        raise HTTPException(404, f"Receipt seq={seq} not found")
+
+    # 2. Verify the receipt
+    verification = None
+    try:
+        public_key = await _resolve_key(None, receipt)
+        chain = stored_chain if stored_chain else gateway.get_receipt_chain()
+        result = verify_receipt(receipt, public_key, chain=chain)
+        verification = result.to_dict()
+    except Exception as exc:
+        logger.warning(f"Verification failed for receipt seq={seq}: {exc}")
+        verification = {"receipt_integrity": "INCONCLUSIVE", "chain_validity": "INCONCLUSIVE", "errors": []}
+
+    # 3. Try to get Merkle inclusion proof
+    inclusion_proof = None
+    try:
+        entries = art_log.get_entries_since(0, limit=10000)
+        all_hashes_hex = [e.artifact_hash.removeprefix("sha256:") for e in entries]
+        # Find this receipt's artifact hash
+        receipt_hash_raw = receipt.get("receipt_hash", "")
+        target_hex = receipt_hash_raw.removeprefix("sha256:")
+        if target_hex and target_hex in all_hashes_hex:
+            inclusion_proof = compute_inclusion_proof(all_hashes_hex, target_hex)
+    except Exception as exc:
+        logger.debug(f"Inclusion proof unavailable for seq={seq}: {exc}")
+
+    # 4. Try to find the matching anchor record
+    anchor = None
+    try:
+        anchors = await store.list_anchor_records(gateway.tenant)
+        if anchors and inclusion_proof:
+            proof_root = inclusion_proof.get("root", "")
+            for a in anchors:
+                if a.get("merkle_root", "").removeprefix("sha256:") == proof_root.removeprefix("sha256:"):
+                    anchor = a
+                    break
+        # If no proof match, just use the latest anchor for context
+        if not anchor and anchors:
+            anchor = anchors[0]
+    except Exception as exc:
+        logger.debug(f"Anchor lookup failed for seq={seq}: {exc}")
+
+    # 5. Generate the PDF
+    pdf_bytes = generate_receipt_pdf(
+        receipt=receipt,
+        verification=verification,
+        inclusion_proof=inclusion_proof,
+        anchor=anchor,
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="gate-receipt-{seq}.pdf"',
+        },
+    )
+
+
 @api_app.post("/tamper-test")
 async def tamper_test(receipt_index: int = 0, field: str = "decision"):
     """DEV ONLY: Tamper with a receipt in the in-memory chain to demonstrate detection.

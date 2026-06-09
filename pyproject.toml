@@ -21,6 +21,7 @@ dependencies = [
     "eth-account>=0.13.0",
     "uvicorn>=0.34.0",
     "httpx>=0.28.0",
+    "reportlab>=4.0.0",
 ]
 
 [project.optional-dependencies]
