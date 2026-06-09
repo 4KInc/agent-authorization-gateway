@@ -1374,32 +1374,155 @@ async def delete_agent(agent_id: str):
         raise HTTPException(404, str(e))
 
 
+class AgentRegisterByUrlRequest(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=256)
+    agent_card_url: str = Field(..., description="URL to the agent's A2A card JSON")
+    live_challenge_url: str = Field(..., description="URL for liveness challenges")
+
+
+@api_app.post("/agents/register-by-url")
+async def register_agent_by_url(req: AgentRegisterByUrlRequest):
+    """Register an agent by its card URL + liveness URL.
+
+    The gateway fetches the public key from the agent's card, sends a
+    liveness challenge, and uses the signed response as proof of possession.
+    No private key needs to leave the agent.
+    """
+    gateway = _get_gateway()
+    store = _get_store()
+
+    # Step 1: Fetch agent card to get public key
+    try:
+        headers = {}
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport.requests import Request
+            from urllib.parse import urlparse
+            parsed = urlparse(req.agent_card_url)
+            audience = f"{parsed.scheme}://{parsed.netloc}"
+            token = google_id_token.fetch_id_token(Request(), audience)
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception:
+            pass
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(req.agent_card_url, headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(400, f"Could not fetch agent card: HTTP {resp.status_code}")
+            card = resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Could not fetch agent card: {e}")
+
+    card_key = card.get("signing_key") or card.get("public_key") or card.get("authentication", {}).get("signing_key")
+    if not card_key or not isinstance(card_key, dict) or not card_key.get("x"):
+        raise HTTPException(400, "Agent card does not contain a signing_key with x value")
+
+    public_key_jwk = {"kty": "OKP", "crv": "Ed25519", "x": card_key["x"]}
+
+    # Step 2: Send liveness challenge — the agent signs it, proving it controls the key
+    live_result = await _verify_agent_liveness(
+        req.live_challenge_url, public_key_jwk, req.agent_id, gateway.tenant,
+    )
+
+    if live_result["status"] != "verified":
+        raise HTTPException(
+            400,
+            f"Liveness challenge failed: {live_result.get('reason', 'unknown')}. "
+            f"The agent must sign the challenge with the private key matching the card's public key.",
+        )
+
+    # Step 3: Register (liveness = proof of possession)
+    try:
+        agent = gateway._registry.register(
+            req.agent_id, public_key_jwk,
+            live_challenge_url=req.live_challenge_url,
+        )
+
+        # Seed liveness record
+        liveness_mgr = _get_liveness()
+        liveness_record = liveness_mgr.get_or_create(req.agent_id, req.live_challenge_url)
+        liveness_record.record_success()
+        try:
+            await store.save_liveness(gateway.tenant, req.agent_id, liveness_record.to_dict())
+        except Exception:
+            pass
+
+        # Persist verification results
+        gateway._registry.update_verification(
+            agent.agent_id,
+            card_verification="verified",
+            card_reason="Card public key matches registered key",
+            live_verification="verified",
+            live_reason="Signed liveness challenge verified",
+            card_url=req.agent_card_url,
+        )
+
+        from datetime import datetime, timezone
+        return {
+            "status": "registered",
+            "agent_id": agent.agent_id,
+            "kid": agent.kid,
+            "proof_of_possession_at_registration": True,
+            "agent_card_url": req.agent_card_url,
+            "agent_card_verification": "verified",
+            "agent_card_verification_reason": "Card public key matches registered key",
+            "live_challenge_url": req.live_challenge_url,
+            "live_challenge_verification": "verified",
+            "live_challenge_verification_reason": "Signed liveness challenge verified",
+            "live_challenge_verified_at": datetime.now(timezone.utc).isoformat(),
+            "liveness_state": liveness_record.state.value,
+        }
+    except Exception as e:
+        raise HTTPException(400, f"Registration failed: {e}")
+
+
 @api_app.get("/agents")
 async def list_agents(include_revoked: bool = False):
     """List all registered agents with liveness state."""
     agents = _get_gateway()._registry.list_agents()
     liveness_mgr = _get_liveness()
 
+    # Enrich all agents with verification data from Firestore
+    registry = _get_gateway()._registry
+    firestore_data: dict[str, dict] = {}
+    if registry._db:
+        try:
+            col = registry._db.collection("tenants").document(registry._tenant).collection("agent_registry")
+            for doc in col.stream():
+                data = doc.to_dict()
+                firestore_data[data.get("agent_id", doc.id)] = data
+        except Exception:
+            pass
+
+    verification_fields = [
+        "agent_card_verification", "agent_card_verification_reason",
+        "live_challenge_verification", "live_challenge_verification_reason",
+        "agent_card_url",
+    ]
+    for agent in agents:
+        fs = firestore_data.get(agent["agent_id"], {})
+        for f in verification_fields:
+            if f in fs:
+                agent[f] = fs[f]
+
     # Include revoked agents from Firestore
     if include_revoked:
-        registry = _get_gateway()._registry
-        if registry._db:
-            active_ids = {a["agent_id"] for a in agents}
-            try:
-                col = registry._db.collection("tenants").document(registry._tenant).collection("agent_registry")
-                for doc in col.stream():
-                    data = doc.to_dict()
-                    if data.get("agent_id") not in active_ids:
-                        agents.append({
-                            "agent_id": data.get("agent_id", doc.id),
-                            "kid": data.get("kid", ""),
-                            "registered_at": data.get("registered_at", 0),
-                            "live_challenge_url": data.get("live_challenge_url"),
-                            "status": data.get("status", "revoked"),
-                            "revoked_at": data.get("revoked_at"),
-                        })
-            except Exception:
-                pass
+        active_ids = {a["agent_id"] for a in agents}
+        for aid, data in firestore_data.items():
+            if aid not in active_ids:
+                entry = {
+                    "agent_id": aid,
+                    "kid": data.get("kid", ""),
+                    "registered_at": data.get("registered_at", 0),
+                    "live_challenge_url": data.get("live_challenge_url"),
+                    "status": data.get("status", "revoked"),
+                    "revoked_at": data.get("revoked_at"),
+                }
+                for f in verification_fields:
+                    if f in data:
+                        entry[f] = data[f]
+                agents.append(entry)
 
     for agent in agents:
         if "status" not in agent:
@@ -1462,7 +1585,20 @@ async def check_agent_liveness(agent_id: str):
 
     record = liveness_mgr.get(agent_id)
     if record is None:
-        raise HTTPException(404, f"No liveness record for agent '{agent_id}'")
+        # Try to recover live_challenge_url from Firestore
+        live_url = None
+        registry = gateway._registry
+        if registry._db:
+            try:
+                doc = registry._db.collection("tenants").document(registry._tenant).collection("agent_registry").document(agent_id).get()
+                if doc.exists:
+                    live_url = doc.to_dict().get("live_challenge_url")
+            except Exception:
+                pass
+        if live_url:
+            record = liveness_mgr.get_or_create(agent_id, live_url)
+        else:
+            raise HTTPException(404, f"No liveness record for agent '{agent_id}'")
 
     if not record.live_challenge_url:
         return {
