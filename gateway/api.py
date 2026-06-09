@@ -133,12 +133,27 @@ def _validate_dict_size(v, max_bytes, field_name):
 
 # --- Request/Response models ---
 
+class DelegationContext(BaseModel):
+    """Optional context for delegated authorizations (agent-to-agent delegation).
+
+    When Agent A delegates a sub-task to Agent B, Agent B includes this context
+    in its authorization request so the gateway can record the delegation chain
+    in the receipt. The parent_receipt_hash links child receipts back to the
+    parent authorization, creating a verifiable delegation tree.
+    """
+    parent_agent_id: str = Field(..., min_length=1, max_length=256, description="Agent ID of the delegating agent")
+    parent_receipt_hash: str | None = Field(None, description="Receipt hash of the parent authorization")
+    human_principal: str | None = Field(None, max_length=512, description="Human identity the delegation chain traces back to")
+    depth: int = Field(1, ge=1, le=10, description="Delegation depth (1 = direct delegation)")
+
+
 class AuthorizeRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=256, description="Unique agent identifier")
     action: str = Field(..., min_length=1, max_length=256, description="Action to authorize")
     resource: str = Field(..., min_length=1, max_length=512, description="Target resource")
     parameters: dict | None = None
     agent_proof: str = Field(..., description="DPoP-style agent identity proof JWT (REQUIRED)")
+    delegation_context: DelegationContext | None = Field(None, description="Optional delegation context for agent-to-agent delegation chains")
 
     @field_validator("agent_id", "action", "resource")
     @classmethod
@@ -451,6 +466,7 @@ async def authorize(req: AuthorizeRequest):
             resource=req.resource,
             parameters=req.parameters,
             agent_proof=req.agent_proof,
+            delegation_context=req.delegation_context.model_dump() if req.delegation_context else None,
         )
     except ValueError as e:
         raise HTTPException(401, str(e))
@@ -2184,6 +2200,214 @@ async def get_artifact_inclusion_proof(artifact_hash: str):
         "agent_kid": entry.agent_kid,
         "log_seq": entry.seq,
     }
+
+
+@api_app.get("/audit-packet")
+async def get_audit_packet(
+    start_seq: int | None = Query(None, ge=1, description="First receipt seq to include"),
+    end_seq: int | None = Query(None, ge=1, description="Last receipt seq to include"),
+    agent_id: str | None = Query(None, description="Filter receipts by agent_id"),
+):
+    """Export a self-contained Audit Packet for offline verification.
+
+    The packet bundles receipts, audit reports, on-chain anchor proofs,
+    Merkle inclusion proofs, public keys, and the current policy into a
+    single JSON file that can be verified without any network access to
+    the Gate operator.  See docs/audit-packet-spec.md for the schema.
+    """
+    from datetime import datetime, timezone
+    from .merkle import compute_inclusion_proof, compute_unified_root
+
+    gateway = _get_gateway()
+    store = _get_store()
+    art_log = _get_artifact_log()
+
+    # --- 1. Fetch receipts (filtered) ---
+    stored_chain = await store.get_chain(gateway.tenant)
+    all_receipts = stored_chain if stored_chain else gateway.get_receipt_chain()
+
+    # Apply seq range filter
+    receipts = []
+    for r in all_receipts:
+        body = r.get("body", {}) if isinstance(r, dict) else {}
+        try:
+            seq = int(body.get("seq", "0") or "0")
+        except (ValueError, TypeError):
+            continue
+        if start_seq is not None and seq < start_seq:
+            continue
+        if end_seq is not None and seq > end_seq:
+            continue
+        # Apply agent_id filter via _meta
+        if agent_id:
+            meta = r.get("_meta", {}) if isinstance(r, dict) else {}
+            if meta.get("agent_id") != agent_id:
+                continue
+        receipts.append(r)
+
+    # Determine time range from receipts
+    timestamps = []
+    for r in receipts:
+        ts = (r.get("body", {}) if isinstance(r, dict) else {}).get("ts")
+        if ts:
+            timestamps.append(ts)
+    time_start = min(timestamps) if timestamps else None
+    time_end = max(timestamps) if timestamps else None
+
+    # --- 2. Fetch audit reports from Firestore ---
+    audit_reports: list[dict] = []
+    receipt_seqs = set()
+    for r in receipts:
+        body = r.get("body", {}) if isinstance(r, dict) else {}
+        try:
+            receipt_seqs.add(str(body.get("seq", "")))
+        except Exception:
+            pass
+
+    if os.environ.get("FIRESTORE_ENABLED", "").lower() == "true":
+        try:
+            from google.cloud import firestore as _fs
+            db = _fs.AsyncClient(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
+            col = db.collection("tenants").document(gateway.tenant).collection("audit_reports")
+            async for doc in col.stream():
+                report = doc.to_dict()
+                if report.get("receipt_seq") in receipt_seqs:
+                    audit_reports.append(report)
+        except Exception as e:
+            logger.warning(f"Audit report fetch (non-fatal): {e}")
+
+    # --- 3. Fetch on-chain anchor records ---
+    anchor_records = await store.list_anchor_records(gateway.tenant)
+
+    # Filter anchors to those covering the seq range
+    anchor_proofs: list[dict] = []
+    for ar in anchor_records:
+        seq_range = ar.get("artifact_seq_range", [])
+        if not seq_range or len(seq_range) < 2:
+            anchor_proofs.append(ar)
+            continue
+        # Include if anchor range overlaps with any receipt seq
+        if receipts:
+            first_seq = int(receipts[0].get("body", {}).get("seq", "0") or "0")
+            last_seq = int(receipts[-1].get("body", {}).get("seq", "0") or "0")
+            if seq_range[1] >= first_seq and seq_range[0] <= last_seq:
+                anchor_proofs.append(ar)
+        else:
+            anchor_proofs.append(ar)
+
+    # --- 4. Compute Merkle inclusion proofs ---
+    inclusion_proofs: dict[str, dict] = {}
+    try:
+        entries = art_log.get_entries_since(0, limit=10000)
+        all_hashes_hex = [e.artifact_hash.removeprefix("sha256:") for e in entries]
+
+        for r in receipts:
+            rh = r.get("receipt_hash", "")
+            if not rh:
+                continue
+            target_hex = rh.removeprefix("sha256:")
+            if target_hex in all_hashes_hex:
+                proof = compute_inclusion_proof(all_hashes_hex, target_hex)
+                if proof:
+                    # Find which anchor covers this proof
+                    anchor_tx = None
+                    for ap in anchor_proofs:
+                        if ap.get("merkle_root") == proof.get("root"):
+                            anchor_tx = ap.get("tx_hash")
+                            break
+                    inclusion_proofs[rh] = {
+                        "merkle_root": proof.get("root", ""),
+                        "leaf_index": proof.get("leaf_index", 0),
+                        "proof": proof.get("proof", []),
+                        "anchor_tx_hash": anchor_tx,
+                    }
+    except Exception as e:
+        logger.warning(f"Inclusion proof computation (non-fatal): {e}")
+
+    # --- 5. Fetch public keys ---
+    public_keys: dict[str, dict] = {}
+    try:
+        stored_keys = await store.get_keys(gateway.tenant)
+        if stored_keys:
+            for k in stored_keys.get("keys", []):
+                kid = k.get("kid", "")
+                if kid:
+                    label = "gateway" if kid == gateway._kid else kid
+                    public_keys[label] = k
+    except Exception:
+        pass
+    # Always include current gateway key
+    gw_key = gateway.get_public_key_jwk()
+    public_keys["gateway"] = gw_key
+
+    # --- 6. Fetch current policy ---
+    policy_snapshots: list[dict] = []
+    try:
+        policy_hash = gateway.policy.policy_hash()
+        rules_summary = ", ".join(
+            f"{r.type}({r.id})" for r in gateway.policy.rules
+        )
+        policy_snapshots.append({
+            "policy_version": policy_hash,
+            "effective_from": time_start or datetime.now(timezone.utc).isoformat(),
+            "rules_summary": f"{len(gateway.policy.rules)} rules: {rules_summary}",
+        })
+    except Exception:
+        pass
+
+    # --- 7. Compute metadata ---
+    approval_count = sum(
+        1 for r in receipts
+        if (r.get("body", {}) if isinstance(r, dict) else {}).get("decision") == "approve"
+    )
+    denial_count = sum(
+        1 for r in receipts
+        if (r.get("body", {}) if isinstance(r, dict) else {}).get("decision") == "deny"
+    )
+
+    # Verify chain integrity inline
+    chain_integrity = "PASS"
+    sorted_receipts = sorted(
+        receipts,
+        key=lambda r: int((r.get("body", {}) if isinstance(r, dict) else {}).get("seq", "0") or "0"),
+    )
+    for i in range(1, len(sorted_receipts)):
+        prev_hash = sorted_receipts[i - 1].get("receipt_hash", "")
+        curr_prev = (sorted_receipts[i].get("body", {}) if isinstance(sorted_receipts[i], dict) else {}).get("prev_receipt", "")
+        if curr_prev and prev_hash and curr_prev != prev_hash:
+            chain_integrity = "FAIL"
+            break
+
+    packet = {
+        "version": "1",
+        "tenant": gateway.tenant,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "time_range": {
+            "start": time_start,
+            "end": time_end,
+        },
+        "receipts": receipts,
+        "audit_reports": audit_reports,
+        "anchor_proofs": anchor_proofs,
+        "inclusion_proofs": inclusion_proofs,
+        "public_keys": public_keys,
+        "policy_snapshots": policy_snapshots,
+        "metadata": {
+            "receipt_count": len(receipts),
+            "approval_count": approval_count,
+            "denial_count": denial_count,
+            "anchor_count": len(anchor_proofs),
+            "chain_integrity": chain_integrity,
+            "generator": "gate-audit-packet-v1",
+        },
+    }
+
+    response = JSONResponse(content=packet)
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="audit-packet-{gateway.tenant}-'
+        f'{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")}.json"'
+    )
+    return response
 
 
 @api_app.post("/tamper-test")

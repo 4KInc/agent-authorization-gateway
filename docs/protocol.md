@@ -821,3 +821,127 @@ This model is compatible with SPIFFE (Secure Production Identity Framework for E
 | WIMSE token exchange | High | WIMSE token service | v2.0 roadmap |
 
 WIMSE (Workload Identity in Multi-System Environments) token exchange — accepting a WIMSE token, extracting the agent identity, and issuing a Gate DPoP credential — is on the v2.0 roadmap.
+
+---
+
+## Delegation Chains
+
+When an agent delegates a sub-task to another agent, the child agent can include an optional `delegation_context` in its authorization request. This creates a verifiable link between the parent's authorization and the child's, forming a delegation tree that auditors can trace back to the original human principal.
+
+### The `delegation_context` Field
+
+The `delegation_context` is an optional object on the `POST /authorize` request body:
+
+```json
+{
+  "agent_id": "agent-B",
+  "action": "query",
+  "resource": "analytics-db",
+  "agent_proof": "eyJ...",
+  "delegation_context": {
+    "parent_agent_id": "agent-A",
+    "parent_receipt_hash": "sha256:abc123...",
+    "human_principal": "alice@example.com",
+    "depth": 1
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `parent_agent_id` | string | Yes | Agent ID of the delegating (parent) agent |
+| `parent_receipt_hash` | string | No | Receipt hash from the parent's own authorization. Links this child authorization to the parent's receipt in the chain. |
+| `human_principal` | string | No | The human identity that the delegation chain traces back to (e.g., the user who initiated the top-level task) |
+| `depth` | integer | Yes | Delegation depth: 1 = direct delegation from the parent, 2 = the parent was itself delegated to, etc. Maximum depth is 10. |
+
+When present, the `delegation_context` is included in the signed receipt body (alongside `token_jti` and `resource_registration_id`). When absent, the field is omitted from the receipt for backward compatibility — existing receipts without delegation context remain valid.
+
+### Receipt Body with Delegation
+
+An approved receipt for a delegated action includes the delegation context:
+
+```json
+{
+  "body": {
+    "v": "1",
+    "tenant": "hackathon-demo",
+    "seq": "42",
+    "ts": "2026-06-08T12:00:00.000Z",
+    "request_digest": "sha256:...",
+    "policy_version": "sha256:...",
+    "decision": "approve",
+    "reasons": [],
+    "prev_receipt": "sha256:...",
+    "token_jti": "550e8400-e29b-41d4-a716-446655440000",
+    "delegation_context": {
+      "parent_agent_id": "agent-A",
+      "parent_receipt_hash": "sha256:abc123...",
+      "human_principal": "alice@example.com",
+      "depth": 1
+    }
+  },
+  "sig": { "alg": "EdDSA", "kid": "...", "value": "..." },
+  "receipt_hash": "sha256:..."
+}
+```
+
+### Depth Limits
+
+The maximum delegation depth is **10**. This prevents unbounded delegation chains that could be difficult to audit or that could indicate a misconfigured agent topology. The gateway rejects any `delegation_context` with `depth` greater than 10 at the request validation layer (HTTP 422).
+
+### How Parent Receipt Hash Links Work
+
+The `parent_receipt_hash` creates a cryptographic link between two receipts in the chain:
+
+1. **Agent A** authorizes `read` on `staging-db` and receives receipt with hash `sha256:aaa...`.
+2. **Agent A** delegates a sub-query to **Agent B**.
+3. **Agent B** authorizes `query` on `analytics-db`, including `delegation_context.parent_receipt_hash = "sha256:aaa..."`.
+4. Agent B's receipt now contains a signed, tamper-evident reference back to Agent A's receipt.
+
+An auditor can follow the `parent_receipt_hash` links to reconstruct the full delegation tree and verify that every link in the chain was authorized by the gateway.
+
+### Worked Example: Agent A Delegates to Agent B
+
+**Step 1:** Agent A requests authorization for its own task.
+
+```
+POST /authorize
+{
+  "agent_id": "agent-A",
+  "action": "orchestrate",
+  "resource": "pipeline/etl-daily",
+  "agent_proof": "<agent-A-proof>"
+}
+
+Response:
+{
+  "decision": "approve",
+  "receipt_hash": "sha256:f8c3a1b2d4e5..."
+}
+```
+
+**Step 2:** Agent A decides it needs Agent B to perform a sub-task. Agent B requests its own authorization, referencing Agent A's receipt.
+
+```
+POST /authorize
+{
+  "agent_id": "agent-B",
+  "action": "query",
+  "resource": "analytics-db",
+  "agent_proof": "<agent-B-proof>",
+  "delegation_context": {
+    "parent_agent_id": "agent-A",
+    "parent_receipt_hash": "sha256:f8c3a1b2d4e5...",
+    "human_principal": "ops-team@example.com",
+    "depth": 1
+  }
+}
+
+Response:
+{
+  "decision": "approve",
+  "receipt_hash": "sha256:7b9e0d3c6a2f..."
+}
+```
+
+Agent B's receipt (seq=42) now contains the `delegation_context` in its signed body, permanently recording that this action was performed on behalf of Agent A, which was itself acting on behalf of `ops-team@example.com`. Both receipts are independently verifiable, and the delegation link is tamper-evident because it is covered by the Ed25519 signature.

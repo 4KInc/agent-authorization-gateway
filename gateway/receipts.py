@@ -38,6 +38,7 @@ class Receipt:
     prev_receipt: str
     token_jti: str | None = None  # JTI of the issued token (null for DENY)
     resource_registration_id: str | None = None  # resource_id if registered, None otherwise
+    delegation_context: dict | None = None  # delegation chain context (null when not delegated)
 
     # Computed after signing
     receipt_hash: str = ""
@@ -62,6 +63,9 @@ class Receipt:
         # Include resource_registration_id only when non-null (backward compat)
         if self.resource_registration_id is not None:
             body["resource_registration_id"] = self.resource_registration_id
+        # Include delegation_context only when non-null (backward compat)
+        if self.delegation_context is not None:
+            body["delegation_context"] = self.delegation_context
         return body
 
     def envelope_dict(self) -> dict:
@@ -106,6 +110,7 @@ class ReceiptChain:
         reasons: list[str],
         token_jti: str | None = None,
         resource_registration_id: str | None = None,
+        delegation_context: dict | None = None,
     ) -> Receipt:
         """Create and sign a new receipt, advancing the chain."""
         self._seq += 1
@@ -124,6 +129,7 @@ class ReceiptChain:
             prev_receipt=self._prev_receipt_hash,
             token_jti=token_jti,
             resource_registration_id=resource_registration_id,
+            delegation_context=delegation_context,
         )
 
         # Canonicalize and hash

@@ -28,6 +28,30 @@ Download these real compliance documents and upload to the bucket:
 gsutil cp *.pdf gs://quick-catcher-470218-b0-auditor-compliance-docs/
 ```
 
+### Additional compliance documents (recommended)
+
+For richer, cross-framework audit reports, add these documents to the same bucket before indexing:
+
+- **EU AI Act Articles 12-13** (automatic recording of events + transparency obligations)
+  Full text: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689
+  Articles 12 (Record-keeping) and 13 (Transparency and provision of information to deployers)
+
+- **DORA Article 11** (ICT-related incident management — audit trail requirements)
+  Full text: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32022R2554
+  Article 11 covers logging, detection, and response for ICT incidents in financial entities.
+
+- **HIPAA Security Rule §164.312(b)** (Audit controls)
+  Reference: https://www.ecfr.gov/current/title-45/subtitle-A/subchapter-C/part-164/subpart-C/section-164.312
+  Requires covered entities to implement mechanisms to record and examine activity in systems containing ePHI.
+
+- **SEC Rule 17a-4(f)** (WORM storage requirements for broker-dealer records)
+  Reference: https://www.ecfr.gov/current/title-17/chapter-II/part-240/subject-group-ECFR1da5b1a1cf5a6f5/section-240.17a-4
+  Requires electronic storage media that preserve records in a non-rewriteable, non-erasable format.
+
+- **CSA Non-Human Identity (NHI) Governance Whitepaper**
+  Download: https://cloudsecurityalliance.org/artifacts/non-human-identity-governance
+  Covers lifecycle management, secret rotation, and audit requirements for machine identities.
+
 ## 3. Create Discovery Engine Data Store
 
 In Google Cloud Console:

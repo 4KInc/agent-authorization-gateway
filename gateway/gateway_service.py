@@ -109,6 +109,7 @@ class GatewayService:
         resource: str,
         agent_proof: str,
         parameters: dict | None = None,
+        delegation_context: dict | None = None,
     ) -> AuthorizationResponse:
         """Evaluate an agent's intended action and return an authorization decision.
 
@@ -166,6 +167,7 @@ class GatewayService:
                 decision="deny",
                 reasons=["RESOURCE_NOT_REGISTERED"],
                 resource_registration_id=None,
+                delegation_context=delegation_context,
             )
             return AuthorizationResponse(
                 decision="deny",
@@ -184,7 +186,7 @@ class GatewayService:
         token = None
         token_jti = str(uuid.uuid4()) if result.decision == "approve" else None
 
-        # Step 3: Sign receipt (includes token_jti and resource_registration_id binding)
+        # Step 3: Sign receipt (includes token_jti, resource_registration_id, and delegation_context binding)
         receipt = self._receipt_chain.sign_decision(
             request_digest=action_digest,
             policy_version=self.policy.policy_hash(),
@@ -192,6 +194,7 @@ class GatewayService:
             reasons=result.reason_codes,
             token_jti=token_jti,
             resource_registration_id=resource_registration_id,
+            delegation_context=delegation_context,
         )
 
         # Step 4: Issue token once with the real receipt_hash and the same jti
