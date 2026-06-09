@@ -698,3 +698,126 @@ If Base mainnet is unreachable when an anchor cycle runs:
 - The next anchor cycle retries with the new chain head
 
 If the gateway is compromised and stops anchoring, everything before the last legitimate anchor is cryptographically committed on-chain. The time between the last anchor and the moment of compromise is unprotected.
+
+---
+
+## AAR/AARP Conformance
+
+Gate receipts are structurally conformant with the Agent Action Receipt Profile (AARP v0.1) maintained by PipeLab. Both systems use Ed25519 signing, SHA-256 hashing, RFC 8785 JCS canonicalization, and `prev_hash` chaining. The following table maps Gate receipt fields to their AAR equivalents:
+
+### Field Mapping: Gate to AAR
+
+| Gate Field | AAR Field | Type | Notes |
+|------------|-----------|------|-------|
+| `seq` | `sequence_number` | string (numeric) | Monotonically increasing, dense from 1 |
+| `decision` | `action_result` | string | Gate uses `"approve"` / `"deny"`; AAR uses `"allowed"` / `"denied"` |
+| `request_digest` | `action_hash` | string | SHA-256 of canonicalized action intent |
+| `policy_version` | `policy_hash` | string | SHA-256 of the policy document in effect |
+| `prev_receipt` | `prev_hash` | string | SHA-256 of the previous receipt's canonical body |
+| `receipt_hash` | `hash` | string | SHA-256 of the current receipt's canonical body |
+| `sig.value` | `signature` | string (base64url) | Ed25519 signature over canonical body bytes |
+| `sig.kid` | `signer_id` | string | Key identifier for the signing key |
+| `sig.alg` | `signature_algorithm` | string | Always `"EdDSA"` in both systems |
+| `ts` | `timestamp` | string (ISO 8601) | UTC timestamp of the decision |
+| `v` | `version` | string | Protocol version identifier |
+| `tenant` | `issuer` | string | Scoping identifier for the receipt chain |
+| `reasons` | `reason_codes` | string[] | Reason codes for deny decisions |
+
+### Gate Extensions Beyond AAR
+
+Gate extends the AAR base schema with the following fields that have no AAR equivalent:
+
+| Gate Field | Purpose |
+|------------|---------|
+| `token_jti` | JTI of the issued authorization token (approve only). Creates an inseparable binding between the receipt and the token it authorized. |
+| `resource_registration_id` | Reference to a registered resource entry (optional). Enables resource-scoped policy enforcement. |
+
+### Conformance Statement
+
+Gate receipts are structurally conformant with the Agent Action Receipt Profile (AARP v0.1). Both use Ed25519, SHA-256, RFC 8785 JCS canonicalization, and `prev_hash` chaining. The cryptographic verification algorithm is identical: canonicalize the body, hash it, verify the Ed25519 signature, and check the `prev_hash` link. A verifier written for AAR receipts can verify Gate receipts with a field-name mapping layer and vice versa.
+
+Gate extends AAR with token_jti binding (linking receipts to authorization tokens), resource_registration_id (resource-scoped enforcement), and Merkle anchoring to Base L2 mainnet (external tamper evidence). These extensions are additive — they do not break AAR verification, which ignores unknown fields in the canonical body.
+
+An AAR compatibility mode (emitting receipts with AAR field names alongside Gate names) and an AAR verification endpoint (accepting AAR-format receipts) are planned for v1.0.
+
+---
+
+## Latency Characteristics
+
+Gate's authorization hot path is designed for minimal, predictable latency.
+
+### Hot Path Composition
+
+The authorization decision path consists of three deterministic operations:
+
+1. **Policy evaluation**: YAML rule matching against the request's agent, action, and resource fields.
+2. **Ed25519 signing**: Sign the canonical receipt body (64-byte signature, ~50 microseconds on modern hardware).
+3. **SHA-256 hashing**: Compute the receipt hash and action digest.
+
+No LLM inference, no external API calls, and no semantic analysis are on the hot path.
+
+### Measurement
+
+Every authorization response includes the `X-Gate-Decision-Ms` header, reporting the wall-clock time (in milliseconds) from request parsing to decision completion. The `X-Gate-Hot-Path` header reports the persistence mode (`sync` or `async`).
+
+**Typical latency**: 2-5ms for policy evaluation + signing + hashing, excluding Firestore persistence.
+
+### Persistence Modes
+
+| Mode | Env Var | Behavior | Latency Impact |
+|------|---------|----------|----------------|
+| `sync` (default) | `HOT_PATH_MODE=sync` | Firestore write completes before the response is returned. The caller is guaranteed that the receipt is persisted when it receives the token. | +20-50ms depending on network round-trip to Firestore. |
+| `async` | `HOT_PATH_MODE=async` | Receipt is buffered in-memory and flushed to Firestore asynchronously. The decision and token are returned immediately. | Near-zero persistence overhead. Trade-off: a process crash before flush could lose buffered receipts (the token would still be valid but the receipt would be missing). |
+
+In both modes, the cryptographic operations (signing, hashing, chain linkage) are performed synchronously before the response. The `async` mode only defers the Firestore write, not the security-critical operations.
+
+### What Is NOT Measured
+
+The `X-Gate-Decision-Ms` header does not include:
+- Network latency between the client and the gateway
+- TLS handshake time
+- Firestore write latency in `sync` mode (measured separately in structured logs)
+- MCP protocol framing overhead
+
+---
+
+## Parameters Confidentiality
+
+The `parameters` field is included in the signed receipt body and is therefore part of the permanent, hash-chained audit trail. Receipt contents may be exported in Audit Packets, shared with auditors, or stored in Firestore.
+
+**Sensitive data (credentials, PII, API keys, etc.) should NOT be placed in the `parameters` field.**
+
+Instead, use references:
+- Database query: pass a `query_id` or `query_hash`, not the raw SQL
+- User data: pass a `user_id`, not the user's name or email
+- API calls: pass an `endpoint_id` and `request_hash`, not the full request body
+
+If parameters must contain data that should not appear in the audit trail, consider:
+1. Hashing the sensitive portions and including only the hash
+2. Using opaque reference identifiers that can be resolved by authorized parties
+
+A `parameters_hash` option (storing a hash of parameters in the receipt while keeping the plaintext in a separate access-controlled store) is on the v2.0 roadmap.
+
+---
+
+## Identity Federation
+
+### DPoP and SPIFFE Compatibility
+
+Gate's agent identity model uses Ed25519 proof of possession (DPoP-style, inspired by RFC 9449). Each agent generates an Ed25519 keypair, registers the public key via the challenge-response flow, and signs a fresh proof JWT for every authorization request.
+
+This model is compatible with SPIFFE (Secure Production Identity Framework for Everyone):
+
+- An agent's SPIFFE SVID (SPIFFE Verifiable Identity Document) can derive the Ed25519 keypair used for Gate registration. The X.509-SVID's key material or a key derived from the SVID's identity can serve as the agent's Gate identity.
+- Gate does not require a SPIRE server or any SPIFFE infrastructure. DPoP is simpler and self-contained — an agent only needs an Ed25519 keypair and access to the Gate registration endpoint.
+- For organizations already using SPIFFE, Gate can accept SVID-derived keys in the registration flow. The agent registers its SPIFFE-derived Ed25519 public key via the standard two-step PoP flow. No changes to the Gate registration protocol are required.
+
+### Positioning
+
+| Identity Model | Complexity | Infrastructure Required | Gate Support |
+|---------------|------------|------------------------|--------------|
+| Gate DPoP (native) | Low | None beyond Gate | Current (v0.5) |
+| SPIFFE SVID-derived | Medium | SPIRE server or SPIFFE-compatible runtime | Compatible now (register SVID-derived key) |
+| WIMSE token exchange | High | WIMSE token service | v2.0 roadmap |
+
+WIMSE (Workload Identity in Multi-System Environments) token exchange — accepting a WIMSE token, extracting the agent identity, and issuing a Gate DPoP credential — is on the v2.0 roadmap.

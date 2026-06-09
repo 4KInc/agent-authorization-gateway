@@ -46,6 +46,73 @@ The ADK chat agent uses Gemini to interpret user requests. A prompt injection co
 ### 7. Compromised agent continues operating after detection
 If a compromised agent is identified (e.g., by anomalous receipt patterns), the Gateway has no automatic enforcement mechanism to prevent it from continuing to request authorizations. **Mitigation:** The Isolator agent (see "AI Agent Fleet" below) monitors the receipt chain and can automatically revoke an agent's registration and set its rate limit to zero when a HIGH or CRITICAL incident is detected. This is an automated containment action triggered by policy-defined thresholds. The Isolator uses the REST API's privileged endpoints — it does not sit on the authorization trust path.
 
+## Trust Boundaries and Operator Compromise
+
+Gate receipts are **proxy-signed**: the gateway signs each receipt on behalf of the authorization decision, not the receiving service. This means the gateway operator is a trusted party in the receipt chain. A compromised or malicious operator could:
+
+1. **Suppress receipts**: Stop recording decisions, creating gaps in the audit trail.
+2. **Alter policies**: Change the authorization policy to permit actions that should be denied, then revert the policy before an audit.
+3. **Bypass the proxy**: Route agent traffic directly to protected resources, bypassing the gateway entirely.
+4. **Tamper with Firestore**: Modify or delete receipt records in the mutable Firestore database.
+
+### Primary Mitigation: Base L2 On-Chain Anchoring
+
+Base L2 on-chain anchoring is the primary defense against operator compromise:
+
+- **Merkle roots are immutable once anchored.** Each anchor transaction commits a Merkle root as EVM calldata on Base mainnet. This data cannot be altered or deleted by the Gate operator, GCP, or any other party after block finalization.
+- **Gaps are detectable.** If an operator stops anchoring (to suppress receipts), the absence of expected anchor transactions is publicly observable on-chain. An auditor can compare the expected anchor cadence (every 10 receipts or hourly) against the actual on-chain record.
+- **Historical state is provable.** Even if the operator wipes Firestore entirely, the on-chain Merkle roots prove what the chain state was at each anchor point. Any receipts that were part of an anchored batch are cryptographically committed.
+- **The window of vulnerability is bounded.** Only the receipts between the last legitimate anchor and the moment of compromise are unprotected. All prior receipts are committed on-chain.
+
+### Receiver-Side Accountability (v2.0 Roadmap)
+
+The Sello protocol (arXiv 2606.04193) proposes an alternative model: **receiver-attested receipts**, where the protected resource (not the proxy) countersigns each receipt, and witness nodes cosign Merkle logs. This eliminates the operator trust assumption entirely.
+
+Gate's current proxy-signed model is an intermediate step toward full receiver-side accountability. The v2.0 roadmap includes:
+
+- **Receiver countersigning**: The protected resource returns a `receipt_ack` signed with its own key, appended to the receipt envelope.
+- **Witness cosigning**: An external witness (operated by the customer, not the Gate operator) countersigns the Merkle root alongside the Base L2 anchor.
+
+These features would make Gate the first system to bridge proxy-signed and receiver-attested trust models.
+
+## Hot Path vs Cold Path Security Model
+
+Gate's architecture deliberately separates authorization (hot path) from analysis (cold path):
+
+### Hot Path: Deterministic Authorization
+
+The authorization hot path is **deterministic by design** — no LLM, no semantic analysis, no network calls to external AI services. The decision is computed from:
+
+1. A declarative YAML policy (pattern matching on agent, action, resource)
+2. Ed25519 signature verification (DPoP proof)
+3. SHA-256 hashing (action digest, receipt hash, chain linkage)
+
+**Input validation at the API boundary:**
+- `action` and `resource` fields: restricted to `[a-zA-Z0-9._/-]+`
+- `parameters` field: capped at 64KB serialized
+- `agent_id`: restricted to `[a-zA-Z0-9_-]{1,256}`
+
+This means **prompt injection cannot affect authorization decisions**. A crafted `action` string like `read; IGNORE PREVIOUS INSTRUCTIONS` is rejected by the regex validator before it reaches the policy engine.
+
+### Cold Path: AI-Powered Audit
+
+The Auditor, Investigator, and Recommender agents use Gemini for compliance analysis, pattern detection, and policy recommendation. These agents:
+
+- **Cannot modify receipts** — they have read-only access to the receipt chain
+- **Cannot issue tokens** — only `GatewayService.authorize()` can issue tokens, and it does not call any LLM
+- **Cannot alter policy** — the Recommender produces proposals with `human_review_required=true`; a human must approve and deploy
+
+If the cold path is compromised (e.g., via prompt injection in receipt parameters that manipulates audit verdicts), the impact is limited to **audit interpretations**, not authorization decisions. The receipts themselves remain cryptographically valid and independently verifiable.
+
+### Two-Layer Defense Summary
+
+| Layer | Path | Technology | Compromise Impact |
+|-------|------|------------|-------------------|
+| Authorization | Hot (deterministic) | YAML policy + Ed25519 + SHA-256 | Cannot be affected by prompt injection or LLM manipulation |
+| Audit | Cold (AI-powered) | Gemini + RAG + compliance corpus | Audit verdicts may be influenced; receipts and tokens are unaffected |
+
+This separation is a deliberate architectural choice, not a limitation. It combines the security guarantees of deterministic systems with the analytical capabilities of LLMs, without letting the latter compromise the former.
+
 ## Tamper-Evidence Trust Assumptions
 
 The tamper-evidence guarantee relies on:
