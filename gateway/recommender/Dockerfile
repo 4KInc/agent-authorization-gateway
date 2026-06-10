@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir \
     cryptography \
     pydantic \
     google-cloud-logging \
+    httpx \
     "a2a-sdk[fastapi]"
 
 COPY . gateway/recommender/

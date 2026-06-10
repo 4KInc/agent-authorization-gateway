@@ -2164,6 +2164,31 @@ async def get_artifact_log(
     }
 
 
+class RegisterArtifactRequest(BaseModel):
+    artifact_type: str = Field(..., pattern=r"^(audit_report|policy_proposal|incident_report|isolation_record)$")
+    artifact_id: str = Field(..., min_length=1, max_length=256)
+    artifact_hash: str = Field(..., pattern=r"^sha256:[0-9a-f]{64}$")
+    agent_kid: str = Field(..., min_length=1, max_length=256)
+
+
+@api_app.post("/artifacts/register")
+async def register_artifact(req: RegisterArtifactRequest):
+    """Register an external agent's artifact in the unified log.
+
+    Called by auditor, recommender, investigator, and isolator after
+    they write their artifact to Firestore. This ensures all signed
+    artifacts are included in the Merkle tree for on-chain anchoring.
+    """
+    art_log = _get_artifact_log()
+    entry = art_log.append(
+        artifact_type=req.artifact_type,
+        artifact_id=req.artifact_id,
+        artifact_hash=req.artifact_hash,
+        agent_kid=req.agent_kid,
+    )
+    return {"seq": entry.seq, "artifact_hash": entry.artifact_hash}
+
+
 @api_app.get("/artifacts/proof/{artifact_hash}")
 async def get_artifact_inclusion_proof(artifact_hash: str):
     """Get a Merkle inclusion proof for a specific artifact.

@@ -55,15 +55,14 @@ def write_proposal(
         .collection("policy_proposals").document(proposal_id).set(envelope)
 
     try:
-        from ..artifact_log import ArtifactLog
-        log = ArtifactLog(tenant=tenant, firestore_client=db)
-        log.append(
-            artifact_type="policy_proposal",
-            artifact_id=proposal_id,
-            artifact_hash=artifact_hash,
-            agent_kid=key.kid,
-        )
+        import os
+        import httpx
+        gateway_url = os.environ.get("GATEWAY_REST_URL", "http://localhost:8080")
+        httpx.post(f"{gateway_url}/artifacts/register", json={
+            "artifact_type": "policy_proposal", "artifact_id": proposal_id,
+            "artifact_hash": artifact_hash, "agent_kid": key.kid,
+        }, timeout=10)
     except Exception as e:
-        logging.getLogger(__name__).warning("Artifact log append failed (non-fatal): %s", e)
+        logging.getLogger(__name__).warning("Artifact log register failed (non-fatal): %s", e)
 
     return envelope

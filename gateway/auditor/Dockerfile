@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir \
     pydantic \
     google-cloud-pubsub \
     google-cloud-logging \
+    httpx \
     "a2a-sdk[fastapi]"
 
 COPY . gateway/auditor/
