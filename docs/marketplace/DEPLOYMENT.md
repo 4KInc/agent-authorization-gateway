@@ -474,7 +474,7 @@ Rough order-of-magnitude at modest scale (1,000–10,000 daily authorization dec
 
 | Service | Estimated Monthly Cost |
 |---|---|
-| Cloud Run (11 services, scale-to-zero) | $50–200 |
+| Cloud Run (16 services, scale-to-zero) | $50–200 |
 | Cloud Firestore | $20–100 |
 | Vertex AI Search (Enterprise tier) | $200–2,000 |
 | Gemini 2.5 Pro (AI agent model calls) | $100–500 |

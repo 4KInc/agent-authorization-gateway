@@ -185,7 +185,7 @@ adk web authorization_gateway  # ADK chat → http://localhost:8000
 ### Run tests
 
 ```bash
-pytest tests/ -v   # 309 tests
+pytest tests/ -v   # 314 tests
 ```
 
 ### Run the full demo
@@ -358,7 +358,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model, including:
 | [docs/protocol.md](docs/protocol.md) | Receipt Chain Verification Protocol v0.5 (incl. on-chain anchoring, PoP registration) |
 | [docs/policy.md](docs/policy.md) | Policy engine: rule types, YAML/Firestore loading, examples |
 | [docs/system-guide.md](docs/system-guide.md) | Comprehensive system guide: onboarding, policy, resources, multi-agent ecosystem |
-| [docs/marketplace/ARCHITECTURE.md](docs/marketplace/ARCHITECTURE.md) | Architecture deep-dive: 6 agents, 11 services, data flow, persistence |
+| [docs/marketplace/ARCHITECTURE.md](docs/marketplace/ARCHITECTURE.md) | Architecture deep-dive: 6 agents, 16 services, data flow, persistence |
 | [docs/marketplace/A2A_INTENTS.md](docs/marketplace/A2A_INTENTS.md) | A2A protocol intents: skills, schemas, authentication across all agents |
 | [docs/marketplace/MCP_TOOLS.md](docs/marketplace/MCP_TOOLS.md) | MCP tool reference: 30 tools with input/output schemas |
 | [NAMING.md](NAMING.md) | Disambiguation from agentgateway project |
@@ -369,7 +369,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model, including:
 - [Gemini 2.5 Pro](https://ai.google.dev/) — agent reasoning + RAG (not in the authorization trust path)
 - [MCP](https://modelcontextprotocol.io/) — framework-agnostic tool integration (30 tools)
 - [A2A](https://google.github.io/A2A/) — agent-to-agent discovery and capability routing
-- [Cloud Run](https://cloud.google.com/run) — serverless deployment (11 services)
+- [Cloud Run](https://cloud.google.com/run) — serverless deployment (16 services)
 - [Cloud Firestore](https://cloud.google.com/firestore) — receipt chain, agent registry, action/resource registry persistence
 - [Base L2](https://base.org/) — on-chain Merkle root anchoring (mainnet, chain ID 8453)
 - Ed25519 / SHA-256 / RFC 8785 / RFC 6962 — cryptographic foundations

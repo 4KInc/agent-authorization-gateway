@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-The Agent Authorization Gateway exposes a unified MCP server with 25 unique tools (plus 5 backward-compatibility aliases, 30 total) spanning all six agents and three registries. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning. Agent registration is not available via MCP — it requires proof of possession, enforced only via the REST API.
+The Agent Authorization Gateway exposes a unified MCP server with 30 tools spanning all six agents and three registries. Any MCP-compatible client (Claude Desktop, ADK agents, LangChain, CrewAI) can connect and invoke the full capability set during reasoning. Agent registration is not available via MCP — it requires proof of possession, enforced only via the REST API.
 
 **Endpoint**: `https://agent-auth-gateway-mcp-1031148889398.us-central1.run.app/mcp`
 **Auth**: Bearer token (`Authorization: Bearer <MCP_AUTH_TOKEN>`)

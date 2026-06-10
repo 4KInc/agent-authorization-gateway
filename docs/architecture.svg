@@ -199,7 +199,7 @@
     <text x="620" y="642" text-anchor="middle" font-size="11" font-weight="bold" fill="#1e293b">Events + Observability</text>
     <text x="620" y="656" text-anchor="middle" font-size="8" fill="#1e293b">Pub/Sub: auditor-conflicts topic</text>
     <text x="620" y="670" text-anchor="middle" font-size="8" fill="#64748b">Cloud Scheduler: 5min + 1hr ticks</text>
-    <text x="620" y="684" text-anchor="middle" font-size="8" fill="#64748b">Cloud Logging: structured JSON (all 11)</text>
+    <text x="620" y="684" text-anchor="middle" font-size="8" fill="#64748b">Cloud Logging: structured JSON (all 16)</text>
   </g>
 
   <!-- Vertex AI Search -->
@@ -237,7 +237,7 @@
 
   <!-- ======== FOOTER 1: CLOUD RUN ======== -->
   <rect x="30" y="730" width="1340" height="44" rx="6" fill="#f1f5f9"/>
-  <text x="48" y="746" font-size="11" font-weight="bold" fill="#64748b">Google Cloud Run: 11 Services (us-central1, scale-to-zero)</text>
+  <text x="48" y="746" font-size="11" font-weight="bold" fill="#64748b">Google Cloud Run: 16 Services (us-central1, scale-to-zero)</text>
   <rect x="48" y="754" width="130" height="16" rx="4" fill="#0d9488"/>
   <text x="113" y="766" text-anchor="middle" font-size="8" font-weight="bold" fill="white">Gateway (REST/MCP/A2A)</text>
   <rect x="184" y="754" width="90" height="16" rx="4" fill="#7c3aed"/>
@@ -292,7 +292,7 @@
   <text x="580" y="863" font-size="8" fill="#1e293b">3.2ms hot path | Evidence buffer</text>
   <text x="770" y="863" font-size="8" fill="#1e293b">Continuous attestation (5 states)</text>
   <text x="960" y="863" font-size="8" fill="#1e293b">15 GCP services | Base L2 anchoring</text>
-  <text x="1160" y="863" font-size="8" fill="#1e293b" font-weight="bold">309 tests passing</text>
+  <text x="1160" y="863" font-size="8" fill="#1e293b" font-weight="bold">314 tests passing</text>
 
   <!-- ======== FOOTER 4: GCP SERVICES ======== -->
   <rect x="30" y="880" width="1340" height="26" rx="6" fill="#0d9488" opacity="0.06"/>
