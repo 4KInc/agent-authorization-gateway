@@ -41,6 +41,11 @@ class _FakeDoc:
         data = self._store.get(self._path, {}).get(self._id)
         return _FakeSnapshot(self._id, data)
 
+    def update(self, fields):
+        existing = self._store.setdefault(self._path, {}).get(self._id, {})
+        existing.update(fields)
+        self._store[self._path][self._id] = existing
+
     def delete(self):
         self._store.get(self._path, {}).pop(self._id, None)
 
